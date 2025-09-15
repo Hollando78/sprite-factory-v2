@@ -10,8 +10,9 @@
       body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); }
       
       .container { display: flex; height: 100vh; }
-      .sidebar { width: 320px; background: #12161d; border-right: 1px solid #1e2732; padding: 20px; overflow-y: auto; }
-      .viewport { flex: 1; position: relative; }
+      .sidebar { width: 320px; min-width: 320px; flex-shrink: 0; background: #12161d; border-right: 1px solid #1e2732; padding: 20px; overflow-y: auto; }
+      .viewport { flex: 1; position: relative; min-width: 0; }
+      .right-sidebar { width: 380px; min-width: 380px; flex-shrink: 0; background: #12161d; border-left: 1px solid #1e2732; padding: 15px; overflow-y: auto; max-height: 100vh; }
       
       h1, h2, h3 { color: var(--accent); margin-top: 0; }
       h1 { font-size: 18px; }
@@ -63,6 +64,21 @@
       @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       
       #viewport { width: 100%; height: 100%; }
+      
+      /* Model Explorer Styles */
+      .model-tree { border: 1px solid #1e2732; border-radius: 4px; max-height: 300px; overflow-y: auto; background: rgba(0,0,0,0.2); }
+      .tree-item { display: block; padding: 4px 8px; cursor: pointer; border: none; background: none; color: var(--fg); width: 100%; text-align: left; font-size: 12px; }
+      .tree-item:hover { background: rgba(112, 176, 255, 0.1); }
+      .tree-item.selected { background: rgba(112, 176, 255, 0.2); color: var(--accent); }
+      .tree-item.equipment { color: #22c55e; font-weight: bold; }
+      .tree-indent { margin-left: 16px; }
+      .transform-controls { margin-top: 10px; }
+      .transform-group { margin-bottom: 15px; padding: 10px; border: 1px solid #1e2732; border-radius: 4px; background: rgba(0,0,0,0.1); }
+      .transform-row { display: flex; gap: 3px; margin-bottom: 5px; align-items: center; flex-wrap: wrap; }
+      .transform-label { width: 15px; font-size: 10px; color: var(--muted); flex-shrink: 0; }
+      .transform-input { width: 50px; flex-shrink: 0; padding: 2px 3px; background: #1e2732; border: 1px solid #2a3441; color: var(--fg); font-size: 10px; }
+      .reset-btn { padding: 2px 6px; font-size: 10px; background: #ef4444; color: white; border: none; cursor: pointer; }
+      .reset-btn:hover { opacity: 0.8; }
       
       .camera-controls { 
         position: absolute; top: 10px; right: 10px; background: rgba(18, 22, 29, 0.9); 
@@ -137,6 +153,29 @@
         </div>
         
         <div class="controls">
+          <h3>Textures</h3>
+          <div class="form-group">
+            <label>Albedo Texture:</label>
+            <select id="albedoSelect">
+              <option value="">Default</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Normal Texture:</label>
+            <select id="normalSelect">
+              <option value="">Default</option>
+            </select>
+          </div>
+          <button id="applyTextures" disabled>Apply Textures</button>
+        </div>
+        
+        <div class="controls">
+          <h3>Equipment</h3>
+          <div id="equipmentList">No equipment loaded</div>
+          <button id="applyEquipment" disabled>Apply Equipment</button>
+        </div>
+        
+        <div class="controls">
           <h3>Assets Status</h3>
           <div id="assetStatus" class="asset-list">Click "Load Model" to check assets</div>
         </div>
@@ -155,13 +194,46 @@
           <p style="margin-top: 20px;">Loading 3D model...</p>
         </div>
       </div>
+      
+      <div class="right-sidebar">
+        <h2>Model Explorer</h2>
+        
+        <div class="controls">
+          <h3>Scene Hierarchy</h3>
+          <div id="modelTree" class="model-tree">
+            <div style="padding: 20px; text-align: center; color: var(--muted);">
+              Load a model to explore its structure
+            </div>
+          </div>
+        </div>
+        
+        <div class="controls">
+          <h3>Transform Controls</h3>
+          <div id="transformControls" class="transform-controls">
+            <div style="padding: 20px; text-align: center; color: var(--muted);">
+              Select an object to edit transforms
+            </div>
+          </div>
+        </div>
+        
+        <div class="controls">
+          <h3>Object Properties</h3>
+          <div id="objectProperties">
+            <div style="padding: 20px; text-align: center; color: var(--muted);">
+              Select an object to view properties
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script>
-      let scene, camera, renderer, controls, model, mixer, clock;
+      let scene, camera, renderer, controls, model, mixer, clock, gltfLoader;
       let currentCharacter = null;
       let animations = [];
       let currentAction = null;
+      let selectedObject = null;
+      let equipmentObjects = new Map(); // Track equipment objects
       
       const ui = {
         characterSelect: document.getElementById('characterSelect'),
@@ -178,8 +250,16 @@
         stopAnimation: document.getElementById('stopAnimation'),
         animationSpeed: document.getElementById('animationSpeed'),
         speedValue: document.getElementById('speedValue'),
+        albedoSelect: document.getElementById('albedoSelect'),
+        normalSelect: document.getElementById('normalSelect'),
+        applyTextures: document.getElementById('applyTextures'),
+        equipmentList: document.getElementById('equipmentList'),
+        applyEquipment: document.getElementById('applyEquipment'),
         viewport: document.getElementById('viewport'),
-        loadingOverlay: document.getElementById('loadingOverlay')
+        loadingOverlay: document.getElementById('loadingOverlay'),
+        modelTree: document.getElementById('modelTree'),
+        transformControls: document.getElementById('transformControls'),
+        objectProperties: document.getElementById('objectProperties')
       };
 
       function showStatus(message, type = 'success') {
@@ -232,6 +312,9 @@
         
         // Clock for animations
         clock = new THREE.Clock();
+        
+        // Initialize loaders
+        gltfLoader = new THREE.GLTFLoader();
         
         // Resize handler
         window.addEventListener('resize', onWindowResize);
@@ -437,6 +520,15 @@
           info += `Bones: ${getBoneCount(model)}<br>`;
           info += `Animations: ${animations.length}`;
           ui.modelInfo.innerHTML = info;
+          
+          // Populate textures and equipment
+          populateAssetControls(characterData);
+          
+          // Add debug cube to verify 3D rendering is working
+          addDebugCube();
+          
+          // Build model explorer tree
+          buildModelTree();
           
           showStatus('Model loaded successfully!', 'success');
           
@@ -698,6 +790,563 @@
       ui.pauseAnimation.addEventListener('click', pauseAnimation);
       ui.stopAnimation.addEventListener('click', stopAnimation);
       ui.animationSpeed.addEventListener('input', updateAnimationSpeed);
+      
+      // Asset controls
+      ui.applyTextures.addEventListener('click', applyTextures);
+      ui.applyEquipment.addEventListener('click', applyEquipment);
+      
+      function populateAssetControls(characterData) {
+        // Populate texture selectors
+        ui.albedoSelect.innerHTML = '<option value="">Default</option>';
+        ui.normalSelect.innerHTML = '<option value="">Default</option>';
+        
+        if (characterData.assets.textures) {
+          characterData.assets.textures.forEach(texture => {
+            if (texture.exists) {
+              const option = document.createElement('option');
+              option.value = texture.path;
+              option.textContent = `${texture.type} (${texture.path})`;
+              
+              if (texture.type === 'albedo') {
+                ui.albedoSelect.appendChild(option);
+              } else if (texture.type === 'normal') {
+                ui.normalSelect.appendChild(option);
+              }
+            }
+          });
+        }
+        
+        // Populate equipment list
+        if (characterData.assets.equipment && characterData.assets.equipment.length > 0) {
+          let equipmentHtml = '';
+          characterData.assets.equipment.forEach((item, index) => {
+            const status = item.exists ? 'found' : 'missing';
+            const statusText = item.exists ? '✓' : '✗';
+            equipmentHtml += `<div class="asset-item ${status}">
+              <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
+                <input type="checkbox" id="equipment_${index}" ${item.exists ? '' : 'disabled'} style="margin-right: 8px;">
+                <span>${statusText} ${item.mount}: ${item.path.split('/').pop()}</span>
+              </label>
+            </div>`;
+          });
+          ui.equipmentList.innerHTML = equipmentHtml;
+        } else {
+          ui.equipmentList.innerHTML = 'No equipment defined';
+        }
+        
+        // Enable controls
+        ui.applyTextures.disabled = false;
+        ui.applyEquipment.disabled = false;
+      }
+      
+      async function applyTextures() {
+        if (!model) {
+          showStatus('No model loaded', 'error');
+          return;
+        }
+        
+        const albedoPath = ui.albedoSelect.value;
+        const normalPath = ui.normalSelect.value;
+        
+        try {
+          const textureLoader = new THREE.TextureLoader();
+          
+          // Apply textures to all mesh materials
+          model.traverse(child => {
+            if (child.isMesh && child.material) {
+              const materials = Array.isArray(child.material) ? child.material : [child.material];
+              
+              materials.forEach(material => {
+                if (material.isMeshStandardMaterial || material.isMeshPhongMaterial) {
+                  // Apply albedo texture
+                  if (albedoPath) {
+                    let albedoUrl;
+                    if (albedoPath.startsWith('../../content/')) {
+                      // Path is already absolute from repo root
+                      albedoUrl = albedoPath.replace('../../', '/');
+                    } else {
+                      // Legacy relative path
+                      const cleanPath = albedoPath.replace(/^\.\//, '');
+                      albedoUrl = `/content/characters/${cleanPath}`;
+                    }
+                    textureLoader.load(albedoUrl, 
+                      texture => {
+                        material.map = texture;
+                        material.needsUpdate = true;
+                        console.log('Applied albedo texture:', albedoUrl);
+                      },
+                      undefined,
+                      error => console.error('Failed to load albedo texture:', error)
+                    );
+                  } else {
+                    material.map = null;
+                    material.needsUpdate = true;
+                  }
+                  
+                  // Apply normal texture
+                  if (normalPath) {
+                    let normalUrl;
+                    if (normalPath.startsWith('../../content/')) {
+                      // Path is already absolute from repo root
+                      normalUrl = normalPath.replace('../../', '/');
+                    } else {
+                      // Legacy relative path
+                      const cleanPath = normalPath.replace(/^\.\//, '');
+                      normalUrl = `/content/characters/${cleanPath}`;
+                    }
+                    textureLoader.load(normalUrl,
+                      texture => {
+                        material.normalMap = texture;
+                        material.needsUpdate = true;
+                        console.log('Applied normal texture:', normalUrl);
+                      },
+                      undefined,
+                      error => console.error('Failed to load normal texture:', error)
+                    );
+                  } else {
+                    material.normalMap = null;
+                    material.needsUpdate = true;
+                  }
+                }
+              });
+            }
+          });
+          
+          showStatus('Textures applied successfully', 'success');
+          
+        } catch (error) {
+          showStatus(`Failed to apply textures: ${error.message}`, 'error');
+          console.error('Texture application error:', error);
+        }
+      }
+      
+      async function applyEquipment() {
+        if (!model || !currentCharacter) {
+          showStatus('No model loaded', 'error');
+          return;
+        }
+        
+        try {
+          // Remove existing equipment
+          const existingEquipment = scene.children.filter(child => child.userData.isEquipment);
+          existingEquipment.forEach(item => scene.remove(item));
+          
+          // Clear equipment tracking
+          equipmentObjects.clear();
+          
+          // Create simple equipment using basic Three.js geometry
+          const equipmentItems = currentCharacter.assets.equipment;
+          
+          for (let i = 0; i < equipmentItems.length; i++) {
+            const item = equipmentItems[i];
+            const checkbox = document.getElementById(`equipment_${i}`);
+            
+            if (checkbox && checkbox.checked && item.exists) {
+              let equipment;
+              
+              // Try to load GLTF model first, fallback to simple geometry
+              try {
+                // Build the full URL for the equipment item
+                let equipmentUrl;
+                const itemPath = item.item || item.path; // Use item.item first, fallback to item.path
+                if (itemPath.startsWith('../../content/')) {
+                  equipmentUrl = itemPath.replace('../../', '/');
+                } else {
+                  const cleanPath = itemPath.replace(/^\.\//, '');
+                  equipmentUrl = `/content/characters/${cleanPath}`;
+                }
+                
+                console.log(`Attempting to load equipment GLTF: ${equipmentUrl}`);
+                console.log(`Equipment item data:`, item);
+                
+                // Load GLTF model
+                const gltf = await new Promise((resolve, reject) => {
+                  gltfLoader.load(
+                    equipmentUrl,
+                    resolve,
+                    undefined,
+                    reject
+                  );
+                });
+                
+                equipment = gltf.scene.clone();
+                equipment.scale.setScalar(1.0); // Reset scale
+                
+                // Apply mount-specific positioning and scaling
+                if (item.mount === 'hand_r') {
+                  equipment.scale.setScalar(5.0); // Make sword much bigger
+                  equipment.position.set(0, 1.0, 0); // Move it up from the hand
+                  equipment.rotation.set(0, 0, 0); // Reset rotation
+                } else if (item.mount === 'head') {
+                  equipment.scale.setScalar(1.0);
+                  equipment.position.set(0, 0, 0);
+                } else if (item.mount === 'back') {
+                  equipment.scale.setScalar(1.0);
+                  equipment.position.set(0, 0, 0);
+                }
+                
+                console.log(`Successfully loaded GLTF equipment for ${item.mount}`);
+                
+              } catch (gltfError) {
+                console.warn(`Failed to load GLTF for ${item.mount}:`, gltfError);
+                console.log(`Falling back to simple geometry for ${item.mount}`);
+                
+                // Fallback to simple geometry
+                if (item.mount === 'head') {
+                  // Golden helmet cube
+                  const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+                  const material = new THREE.MeshBasicMaterial({ color: 0xffdd00 });
+                  equipment = new THREE.Mesh(geometry, material);
+                  equipment.position.set(0, 0.3, 0);
+                } else if (item.mount === 'hand_r') {
+                  // Silver sword rectangle - make it much more visible
+                  const geometry = new THREE.BoxGeometry(0.2, 1.5, 0.2);
+                  const material = new THREE.MeshBasicMaterial({ color: 0x00ccff });
+                  equipment = new THREE.Mesh(geometry, material);
+                  equipment.position.set(0.3, 0.5, 0);
+                } else if (item.mount === 'back') {
+                  // Red cape rectangle - make it much more visible
+                  const geometry = new THREE.BoxGeometry(0.8, 1.0, 0.2);
+                  const material = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+                  equipment = new THREE.Mesh(geometry, material);
+                  equipment.position.set(0, 0, -0.5);
+                }
+              }
+              
+              if (equipment) {
+                equipment.userData.isEquipment = true;
+                equipment.userData.mount = item.mount;
+                
+                // Find attachment point on the model
+                const attachmentPoint = findBoneByName(model, item.mount);
+                if (attachmentPoint) {
+                  attachmentPoint.add(equipment);
+                  console.log(`Attached ${item.mount} equipment to bone ${attachmentPoint.name}`);
+                } else {
+                  // If no specific attachment point found, add to scene
+                  scene.add(equipment);
+                  console.log(`Added ${item.mount} equipment to scene (no attachment point found)`);
+                }
+                
+                // Track equipment for model explorer
+                equipmentObjects.set(item.mount, equipment);
+              }
+            }
+          }
+          
+          // Rebuild model explorer tree to include equipment
+          buildModelTree();
+          
+          showStatus('Equipment applied successfully', 'success');
+          
+        } catch (error) {
+          showStatus(`Failed to apply equipment: ${error.message}`, 'error');
+          console.error('Equipment application error:', error);
+        }
+      }
+      
+      function addDebugCube() {
+        // Create a bright red cube for debugging
+        const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const debugCube = new THREE.Mesh(geometry, material);
+        
+        // Position it next to the model
+        debugCube.position.set(2, 1, 0);
+        debugCube.userData.isDebug = true;
+        
+        scene.add(debugCube);
+        console.log('Added debug cube at position (2, 1, 0)');
+      }
+
+      function findBoneByName(object, name) {
+        let found = null;
+        const searchTerms = {
+          'hand_r': ['hand_r', 'righthand', 'hand.r', 'mixamorig:righthand', 'rhand', 'r_hand', 'hand_right'],
+          'head': ['head', 'mixamorig:head', 'headtop', 'head_top'],
+          'back': ['spine', 'spine2', 'spine1', 'mixamorig:spine', 'mixamorig:spine2', 'back', 'chest']
+        };
+        
+        const terms = searchTerms[name.toLowerCase()] || [name];
+        
+        object.traverse(child => {
+          if (child.isBone) {
+            console.log('Found bone:', child.name);
+            for (const term of terms) {
+              if (child.name.toLowerCase().includes(term.toLowerCase())) {
+                found = child;
+                console.log(`Matched bone "${child.name}" for mount point "${name}"`);
+                return;
+              }
+            }
+          }
+        });
+        
+        if (!found) {
+          console.log(`No bone found for mount point "${name}". Available bones logged above.`);
+        }
+        
+        return found;
+      }
+      
+      // Model Explorer Functions
+      function buildModelTree() {
+        if (!model && !scene) {
+          ui.modelTree.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--muted);">Load a model to explore its structure</div>';
+          return;
+        }
+        
+        let html = '';
+        
+        // Add main model
+        if (model) {
+          html += buildTreeItem(model, 0, 'Model');
+        }
+        
+        // Add equipment objects
+        equipmentObjects.forEach((equipment, mountPoint) => {
+          html += buildTreeItem(equipment, 0, `Equipment: ${mountPoint}`, true);
+        });
+        
+        ui.modelTree.innerHTML = html;
+      }
+      
+      function buildTreeItem(object, depth, customName = null, isEquipment = false) {
+        const indent = 'tree-indent '.repeat(depth);
+        const name = customName || object.name || object.type || 'Unnamed';
+        const equipClass = isEquipment ? ' equipment' : '';
+        const id = `tree_${object.uuid}`;
+        
+        let html = `<button class="tree-item ${indent}${equipClass}" data-object-id="${object.uuid}" id="${id}">`;
+        html += `${'  '.repeat(depth)}${name}`;
+        if (object.children && object.children.length > 0) {
+          html += ` (${object.children.length} children)`;
+        }
+        html += '</button>';
+        
+        // Add children
+        if (object.children) {
+          object.children.forEach(child => {
+            html += buildTreeItem(child, depth + 1);
+          });
+        }
+        
+        return html;
+      }
+      
+      function selectObject(object) {
+        // Clear previous selection
+        document.querySelectorAll('.tree-item.selected').forEach(item => {
+          item.classList.remove('selected');
+        });
+        
+        // Highlight new selection
+        if (object) {
+          const treeItem = document.getElementById(`tree_${object.uuid}`);
+          if (treeItem) {
+            treeItem.classList.add('selected');
+          }
+        }
+        
+        selectedObject = object;
+        updateTransformControls();
+        updateObjectProperties();
+      }
+      
+      function updateTransformControls() {
+        if (!selectedObject) {
+          ui.transformControls.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--muted);">Select an object to edit transforms</div>';
+          return;
+        }
+        
+        const pos = selectedObject.position;
+        const rot = selectedObject.rotation;
+        const scale = selectedObject.scale;
+        
+        ui.transformControls.innerHTML = `
+          <div class="transform-group">
+            <h4 style="margin: 0 0 5px 0; color: var(--accent); font-size: 12px;">Position</h4>
+            <div class="transform-row">
+              <span class="transform-label">X</span>
+              <input type="number" class="transform-input" id="pos-x" value="${pos.x.toFixed(2)}" step="0.1">
+              <span class="transform-label">Y</span>
+              <input type="number" class="transform-input" id="pos-y" value="${pos.y.toFixed(2)}" step="0.1">
+            </div>
+            <div class="transform-row">
+              <span class="transform-label">Z</span>
+              <input type="number" class="transform-input" id="pos-z" value="${pos.z.toFixed(2)}" step="0.1">
+              <button class="reset-btn" onclick="resetPosition()">Reset</button>
+            </div>
+          </div>
+          
+          <div class="transform-group">
+            <h4 style="margin: 0 0 5px 0; color: var(--accent); font-size: 12px;">Rotation (degrees)</h4>
+            <div class="transform-row">
+              <span class="transform-label">X</span>
+              <input type="number" class="transform-input" id="rot-x" value="${(rot.x * 180/Math.PI).toFixed(0)}" step="5">
+              <span class="transform-label">Y</span>
+              <input type="number" class="transform-input" id="rot-y" value="${(rot.y * 180/Math.PI).toFixed(0)}" step="5">
+            </div>
+            <div class="transform-row">
+              <span class="transform-label">Z</span>
+              <input type="number" class="transform-input" id="rot-z" value="${(rot.z * 180/Math.PI).toFixed(0)}" step="5">
+              <button class="reset-btn" onclick="resetRotation()">Reset</button>
+            </div>
+          </div>
+          
+          <div class="transform-group">
+            <h4 style="margin: 0 0 5px 0; color: var(--accent); font-size: 12px;">Scale</h4>
+            <div class="transform-row">
+              <span class="transform-label">All</span>
+              <input type="number" class="transform-input" id="scale-all" value="${scale.x.toFixed(1)}" step="0.5" min="0.1" onchange="updateUniformScale()">
+              <button class="reset-btn" onclick="setScale(1,1,1)">1.0</button>
+            </div>
+            <div class="transform-row">
+              <span class="transform-label">X</span>
+              <input type="number" class="transform-input" id="scale-x" value="${scale.x.toFixed(1)}" step="0.1" min="0.1">
+              <span class="transform-label">Y</span>
+              <input type="number" class="transform-input" id="scale-y" value="${scale.y.toFixed(1)}" step="0.1" min="0.1">
+            </div>
+            <div class="transform-row">
+              <span class="transform-label">Z</span>
+              <input type="number" class="transform-input" id="scale-z" value="${scale.z.toFixed(1)}" step="0.1" min="0.1">
+              <button class="reset-btn" onclick="resetScale()">Reset</button>
+            </div>
+          </div>
+        `;
+        
+        // Add event listeners for real-time updates
+        ['pos-x', 'pos-y', 'pos-z'].forEach(id => {
+          document.getElementById(id).addEventListener('input', updatePosition);
+        });
+        ['rot-x', 'rot-y', 'rot-z'].forEach(id => {
+          document.getElementById(id).addEventListener('input', updateRotation);
+        });
+        ['scale-x', 'scale-y', 'scale-z'].forEach(id => {
+          document.getElementById(id).addEventListener('input', updateScale);
+        });
+      }
+      
+      function updateObjectProperties() {
+        if (!selectedObject) {
+          ui.objectProperties.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--muted);">Select an object to view properties</div>';
+          return;
+        }
+        
+        const isEquipment = selectedObject.userData.isEquipment;
+        const mountPoint = selectedObject.userData.mount;
+        
+        ui.objectProperties.innerHTML = `
+          <div style="font-size: 12px; line-height: 1.4;">
+            <div><strong>Name:</strong> ${selectedObject.name || 'Unnamed'}</div>
+            <div><strong>Type:</strong> ${selectedObject.type}</div>
+            ${isEquipment ? `<div><strong>Mount:</strong> ${mountPoint}</div>` : ''}
+            <div><strong>UUID:</strong> ${selectedObject.uuid.substring(0, 8)}...</div>
+            <div><strong>Children:</strong> ${selectedObject.children.length}</div>
+            ${selectedObject.geometry ? `<div><strong>Vertices:</strong> ${selectedObject.geometry.attributes.position.count}</div>` : ''}
+            ${selectedObject.material ? `<div><strong>Material:</strong> ${selectedObject.material.type}</div>` : ''}
+          </div>
+        `;
+      }
+      
+      // Transform helper functions
+      function updatePosition() {
+        if (!selectedObject) return;
+        const x = parseFloat(document.getElementById('pos-x').value) || 0;
+        const y = parseFloat(document.getElementById('pos-y').value) || 0;
+        const z = parseFloat(document.getElementById('pos-z').value) || 0;
+        selectedObject.position.set(x, y, z);
+      }
+      
+      function updateRotation() {
+        if (!selectedObject) return;
+        const x = (parseFloat(document.getElementById('rot-x').value) || 0) * Math.PI / 180;
+        const y = (parseFloat(document.getElementById('rot-y').value) || 0) * Math.PI / 180;
+        const z = (parseFloat(document.getElementById('rot-z').value) || 0) * Math.PI / 180;
+        selectedObject.rotation.set(x, y, z);
+      }
+      
+      function updateScale() {
+        if (!selectedObject) return;
+        const x = parseFloat(document.getElementById('scale-x').value) || 1;
+        const y = parseFloat(document.getElementById('scale-y').value) || 1;
+        const z = parseFloat(document.getElementById('scale-z').value) || 1;
+        selectedObject.scale.set(x, y, z);
+        document.getElementById('scale-all').value = x.toFixed(3);
+      }
+      
+      function updateUniformScale() {
+        if (!selectedObject) return;
+        const value = parseFloat(document.getElementById('scale-all').value) || 1;
+        setScale(value, value, value);
+      }
+      
+      function setScale(x, y, z) {
+        if (!selectedObject) return;
+        selectedObject.scale.set(x, y, z);
+        if (document.getElementById('scale-x')) {
+          document.getElementById('scale-x').value = x.toFixed(3);
+          document.getElementById('scale-y').value = y.toFixed(3);
+          document.getElementById('scale-z').value = z.toFixed(3);
+          document.getElementById('scale-all').value = x.toFixed(3);
+        }
+      }
+      
+      function resetPosition() {
+        if (!selectedObject) return;
+        selectedObject.position.set(0, 0, 0);
+        updateTransformControls();
+      }
+      
+      function resetRotation() {
+        if (!selectedObject) return;
+        selectedObject.rotation.set(0, 0, 0);
+        updateTransformControls();
+      }
+      
+      function resetScale() {
+        if (!selectedObject) return;
+        selectedObject.scale.set(1, 1, 1);
+        updateTransformControls();
+      }
+      
+      // Add event listener for tree item clicks
+      document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('tree-item')) {
+          const objectId = e.target.dataset.objectId;
+          if (objectId) {
+            // Find object by UUID
+            let targetObject = null;
+            
+            // Search in model
+            if (model) {
+              model.traverse(obj => {
+                if (obj.uuid === objectId) targetObject = obj;
+              });
+            }
+            
+            // Search in equipment
+            if (!targetObject) {
+              equipmentObjects.forEach(equipment => {
+                equipment.traverse(obj => {
+                  if (obj.uuid === objectId) targetObject = obj;
+                });
+              });
+            }
+            
+            // Search in scene
+            if (!targetObject) {
+              scene.traverse(obj => {
+                if (obj.uuid === objectId) targetObject = obj;
+              });
+            }
+            
+            if (targetObject) {
+              selectObject(targetObject);
+            }
+          }
+        }
+      });
       
       // Initialize
       initThreeJS();

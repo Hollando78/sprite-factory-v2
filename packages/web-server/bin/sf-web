@@ -221,7 +221,9 @@ async function handleContentInspection(req, res) {
         }
       }
       
-      // Check textures
+      // Check textures - both defined and additional variants
+      const texturesSeen = new Set();
+      
       if (characterData.skin?.albedo) {
         const texPath = path.resolve(path.dirname(fullPath), characterData.skin.albedo);
         result.assets.textures.push({
@@ -229,6 +231,7 @@ async function handleContentInspection(req, res) {
           path: characterData.skin.albedo,
           exists: fs.existsSync(texPath)
         });
+        texturesSeen.add(characterData.skin.albedo);
       }
       
       if (characterData.skin?.normal) {
@@ -238,6 +241,33 @@ async function handleContentInspection(req, res) {
           path: characterData.skin.normal,
           exists: fs.existsSync(texPath)
         });
+        texturesSeen.add(characterData.skin.normal);
+      }
+      
+      // Scan for additional texture variants in the skins directory
+      try {
+        const skinsDir = path.resolve(path.dirname(fullPath), 'skins');
+        if (fs.existsSync(skinsDir)) {
+          const files = fs.readdirSync(skinsDir);
+          files.forEach(file => {
+            if (file.match(/\.(png|jpg|jpeg)$/i)) {
+              const relativePath = `./skins/${file}`;
+              if (!texturesSeen.has(relativePath)) {
+                let type = 'albedo'; // default
+                if (file.toLowerCase().includes('normal') || file.toLowerCase().includes('bump')) {
+                  type = 'normal';
+                }
+                result.assets.textures.push({
+                  type: type,
+                  path: relativePath,
+                  exists: true
+                });
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.log('Error scanning skins directory:', error.message);
       }
       
       // Check equipment

@@ -8,13 +8,13 @@
     "proportions": { "headScale": 1.1, "armLength": 1.0, "legLength": 0.95 }
   },
   "skin": {
-    "albedo": "./skins/warrior_albedo.png",
-    "normal": "./skins/warrior_normal.png"
+    "albedo": "../../content/characters/skins/warrior_albedo.png",
+    "normal": "../../content/characters/skins/warrior_normal.png"
   },
   "equipment": [
-    { "mount": "head", "item": "./gear/helmets/closed_01.glb", "layer": 60 },
-    { "mount": "hand_r", "item": "./gear/weapons/sword_iron.glb", "layer": 40 },
-    { "mount": "back", "item": "./gear/capes/cape_short.glb", "layer": 20, "secondaryPhysics": "cloth" }
+    { "mount": "head", "item": "../../content/characters/gear/helmets/viking_helmet/viking_helmet.gltf", "layer": 60 },
+    { "mount": "hand_r", "item": "../../content/characters/gear/weapons/sword_real.gltf", "layer": 40 },
+    { "mount": "back", "item": "../../content/characters/gear/capes/cape_short.gltf", "layer": 20, "secondaryPhysics": "cloth" }
   ],
   "animations": {
     "set": "standard_v2",
