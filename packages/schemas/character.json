@@ -1,0 +1,56 @@
+{
+  "$id": "https://spritefactory.dev/schemas/character.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Sprite Factory Character",
+  "type": "object",
+  "required": ["name", "rig", "animations", "export"],
+  "properties": {
+    "name": { "type": "string" },
+    "seed": { "type": "integer" },
+    "rig": {
+      "type": "object",
+      "required": ["src"],
+      "properties": {
+        "src": { "type": "string" },
+        "scale": { "type": "number" },
+        "proportions": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "skin": { "type": "object", "additionalProperties": true },
+    "equipment": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["mount", "item"],
+        "properties": {
+          "mount": { "type": "string" },
+          "item": { "type": "string" },
+          "layer": { "type": "integer" },
+          "secondaryPhysics": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "animations": {
+      "type": "object",
+      "required": ["set"],
+      "properties": {
+        "set": { "type": "string" },
+        "overrides": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "export": {
+      "type": "object",
+      "required": ["mode", "masterResolution"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["both", "paperdoll", "baked"] },
+        "paperdollLayers": { "type": "array", "items": { "type": "string" } },
+        "masterResolution": { "type": "integer" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

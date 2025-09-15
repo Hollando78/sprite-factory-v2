@@ -1,0 +1,31 @@
+{
+  "$schema": "https://spritefactory.dev/schemas/character.json",
+  "name": "Warrior_M01",
+  "seed": 987654,
+  "rig": {
+    "src": "../../content/rigs/Ch36_nonPBR.fbx",
+    "scale": 1.0,
+    "proportions": { "headScale": 1.1, "armLength": 1.0, "legLength": 0.95 }
+  },
+  "skin": {
+    "albedo": "./skins/warrior_albedo.png",
+    "normal": "./skins/warrior_normal.png"
+  },
+  "equipment": [
+    { "mount": "head", "item": "./gear/helmets/closed_01.glb", "layer": 60 },
+    { "mount": "hand_r", "item": "./gear/weapons/sword_iron.glb", "layer": 40 },
+    { "mount": "back", "item": "./gear/capes/cape_short.glb", "layer": 20, "secondaryPhysics": "cloth" }
+  ],
+  "animations": {
+    "set": "standard_v2",
+    "overrides": {
+      "idle": { "trim": [5, 45] },
+      "run": { "speed": 1.1, "events": [{ "frame": 8, "tag": "footstep" }] }
+    }
+  },
+  "export": {
+    "mode": "both",
+    "paperdollLayers": ["base", "helmet", "weapon", "cape"],
+    "masterResolution": 512
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@sprite-factory/web-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight web frontend server for Sprite Factory QA",
+  "bin": {
+    "sf-web": "./bin/sf-web"
+  },
+  "type": "commonjs",
+  "engines": { "node": ">=18" }
+}

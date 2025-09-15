@@ -1,0 +1,11 @@
+{
+  "$schema": "https://spritefactory.dev/schemas/animationset.json",
+  "retargetProfile": "mixamo_humanoid",
+  "clips": {
+    "walk": { "src": "../../content/anims/Standard Walk.fbx", "loop": true, "frames": 32 },
+    "run":  { "src": "../../content/anims/Standard Run.fbx",  "loop": true, "frames": 24 },
+    "attack_slash": { "src": "../../content/anims/Standing Melee Attack Horizontal.fbx", "loop": false, "frames": 20, "markers": { "impact": 12 } },
+    "hit":   { "src": "../../content/anims/Head Hit.fbx",  "loop": false, "frames": 16 },
+    "die":   { "src": "../../content/anims/Standing React Death Backward.fbx",  "loop": false, "frames": 28 }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$id": "https://spritefactory.dev/schemas/project.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Sprite Factory Project Config",
+  "type": "object",
+  "required": ["seed", "outputDir", "cacheDir", "directions", "projection", "resolutions", "passes"],
+  "properties": {
+    "seed": { "type": "integer" },
+    "outputDir": { "type": "string" },
+    "cacheDir": { "type": "string" },
+    "directions": { "type": "integer", "enum": [4, 8, 16] },
+    "projection": { "type": "string", "enum": ["orthographic", "isometric"] },
+    "camera": {
+      "type": "object",
+      "properties": {
+        "isoAngle": { "type": "number" },
+        "distance": { "type": "number" },
+        "height": { "type": "number" },
+        "orthoScale": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "lighting": { "type": "object", "additionalProperties": true },
+    "resolutions": { "type": "array", "items": { "type": "integer" } },
+    "passes": { "type": "array", "items": { "type": "string" } },
+    "palette": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": false
+}

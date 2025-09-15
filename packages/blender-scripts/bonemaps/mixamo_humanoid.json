@@ -1,0 +1,28 @@
+{
+  "name": "mixamo_humanoid",
+  "restPose": "T",
+  "axis": { "forward": "-Z", "up": "+Y" },
+  "scale": 1.0,
+  "map": {
+    "Hips": "Hips",
+    "Spine": "Spine",
+    "Spine1": "Spine1",
+    "Spine2": "Spine2",
+    "Neck": "Neck",
+    "Head": "Head",
+    "LeftShoulder": "Shoulder.L",
+    "LeftArm": "UpperArm.L",
+    "LeftForeArm": "LowerArm.L",
+    "LeftHand": "Hand.L",
+    "RightShoulder": "Shoulder.R",
+    "RightArm": "UpperArm.R",
+    "RightForeArm": "LowerArm.R",
+    "RightHand": "Hand.R",
+    "LeftUpLeg": "UpperLeg.L",
+    "LeftLeg": "LowerLeg.L",
+    "LeftFoot": "Foot.L",
+    "RightUpLeg": "UpperLeg.R",
+    "RightLeg": "LowerLeg.R",
+    "RightFoot": "Foot.R"
+  }
+}

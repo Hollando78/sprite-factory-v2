@@ -1,0 +1,386 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sprite Factory QA Viewer</title>
+    <style>
+      :root { --bg:#0b0d10; --fg:#e8eef6; --muted:#9fb3c8; --accent:#70b0ff; --accent2:#f7b267; --grid:#223; }
+      html, body { height: 100%; }
+      body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--fg); display:flex; flex-direction:column; }
+      header { padding: 12px 16px; border-bottom: 1px solid #1a1f26; display:flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      header h1 { font-size: 16px; margin: 0 12px 0 0; color: var(--muted); font-weight: 600; }
+      label { font-size: 12px; color: var(--muted); margin-right: 8px; }
+      select, input[type="number"], input[type="text"], button { background:#12161d; color: var(--fg); border:1px solid #1e2732; border-radius:6px; padding:6px 8px; font-size:12px; }
+      button { cursor:pointer; }
+      .toggle { display:inline-flex; align-items:center; gap:6px; margin-right:8px; }
+      #main { display:flex; gap: 12px; padding:12px; flex:1; min-height:0; }
+      #left { width: 300px; border-right:1px solid #1a1f26; padding-right: 12px; overflow:auto; }
+      #right { flex:1; display:flex; flex-direction:column; min-width:0; }
+      #drop { border:1px dashed #2a3542; padding:10px; border-radius:8px; color:var(--muted); text-align:center; }
+      #list { margin-top: 8px; font-size:12px; color:#a8b4c3; }
+      #controls { display:flex; align-items:center; gap:8px; padding: 8px 0; border-bottom:1px solid #1a1f26; }
+      #canvasWrap { position: relative; flex:1; display:flex; justify-content:center; align-items:center; background:#0e1217; border-radius:8px; margin-top:8px; overflow:auto; }
+      canvas { background: repeating-conic-gradient(from 0deg, #111 0% 25%, #0c0c0c 0% 50%) 50% / 24px 24px; border:1px solid #1a1f26; }
+      #timeline { height: 48px; display:flex; align-items:center; gap:8px; padding:8px 0; }
+      #timelineBar { position: relative; flex:1; height: 8px; background:#1a1f26; border-radius: 4px; }
+      .marker { position:absolute; top:-4px; width: 2px; height:16px; background: var(--accent2); }
+      .eventLabel { position:absolute; top:16px; transform:translateX(-50%); font-size:10px; color:var(--muted); white-space:nowrap; }
+      #status { font-size: 12px; color: var(--muted); padding: 6px 0; }
+      .row { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; }
+      input[type="range"] { width: 180px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Sprite Factory QA Viewer</h1>
+      <div style="margin-left: auto;">
+        <a href="/build.html" style="color: var(--accent); text-decoration: none; margin-right: 15px;">Build Interface</a>
+        <a href="/preview.html" style="color: var(--accent); text-decoration: none;">3D Preview</a>
+      </div>
+      <div class="row">
+        <input id="file" type="file" multiple />
+        <div id="drop">Drop frames_index.json, atlas_*.json, character.meta.json</div>
+      </div>
+      <div id="status"></div>
+    </header>
+    <div id="main">
+      <aside id="left">
+        <div class="row"><label>Clip</label><select id="clip"></select></div>
+        <div class="row"><label>Direction</label><input id="dir" type="range" min="0" max="7" value="0"/><span id="dirVal">0</span></div>
+        <div class="row"><label>Frame</label><input id="frame" type="range" min="0" max="0" value="0"/><span id="frameVal">0</span></div>
+        <div class="row"><label>FPS</label><input id="fps" type="number" min="1" max="60" value="12" style="width:64px"/><button id="play">Play</button><button id="prev">Prev</button><button id="next">Next</button></div>
+        <div class="row"><span class="toggle"><input id="showAnchors" type="checkbox" checked/> <label for="showAnchors">Anchors</label></span>
+          <span class="toggle"><input id="showEvents" type="checkbox" checked/> <label for="showEvents">Events</label></span>
+          <span class="toggle"><input id="showHitboxes" type="checkbox" checked/> <label for="showHitboxes">Hitboxes</label></span>
+        </div>
+        <div id="list"></div>
+      </aside>
+      <section id="right">
+        <div id="controls"></div>
+        <div id="canvasWrap"><canvas id="cv" width="512" height="512"></canvas></div>
+        <div id="timeline"><div id="timelineBar"></div></div>
+      </section>
+    </div>
+    <script>
+      const ui = {
+        file: document.getElementById('file'),
+        drop: document.getElementById('drop'),
+        status: document.getElementById('status'),
+        list: document.getElementById('list'),
+        clip: document.getElementById('clip'),
+        dir: document.getElementById('dir'), dirVal: document.getElementById('dirVal'),
+        frame: document.getElementById('frame'), frameVal: document.getElementById('frameVal'),
+        fps: document.getElementById('fps'),
+        play: document.getElementById('play'), prev: document.getElementById('prev'), next: document.getElementById('next'),
+        showAnchors: document.getElementById('showAnchors'), showEvents: document.getElementById('showEvents'), showHitboxes: document.getElementById('showHitboxes'),
+        cv: document.getElementById('cv'),
+        timelineBar: document.getElementById('timelineBar'),
+      };
+
+      const state = {
+        layout: 'by-animation',
+        entries: [],
+        atlases: new Map(), // key => framesJson
+        meta: null,
+        playId: 0,
+        zoom: 2,
+        images: new Map(),
+      };
+
+      function info(msg) { ui.status.textContent = msg; }
+      function setList(items) { ui.list.innerHTML = items.map(s=>`<div>${s}</div>`).join(''); }
+
+      async function tryFetchFromServer() {
+        // Support query ?character=Name to fetch from server endpoints
+        const q = new URLSearchParams(location.search);
+        const name = q.get('character');
+        if (!name) { 
+          console.log('No character parameter found');
+          return false; 
+        }
+        console.log('Trying to fetch for character:', name);
+        try {
+          console.log('Fetching frames_index.json...');
+          const idxRes = await fetch(`/dist/${encodeURIComponent(name)}/frames_index.json`);
+          console.log('frames_index response:', idxRes.status, idxRes.ok);
+          if (!idxRes.ok) { info('frames_index.json not found on server'); return false; }
+          const idx = await idxRes.json();
+          console.log('Loaded frames_index:', idx);
+          state.layout = idx.layout || 'by-animation';
+          state.entries = idx.entries || [];
+          // Load atlases
+          for (const ent of state.entries) {
+            const file = ent.file || `atlas_${idx.resolution}_${ent.clip}.json`;
+            console.log(`Loading atlas: ${file}`);
+            const r = await fetch(`/dist/${encodeURIComponent(name)}/${file}`);
+            if (r.ok) {
+              const atlasData = await r.json();
+              state.atlases.set(file, atlasData);
+              console.log(`Loaded atlas ${file}:`, atlasData);
+              
+              // Preload PNG if available
+              if (ent.image) {
+                const pngUrl = `/dist/${encodeURIComponent(name)}/${ent.image}`;
+                console.log(`Preloading PNG: ${pngUrl}`);
+                const img = new Image();
+                img.onload = () => {
+                  console.log(`PNG loaded: ${ent.image}`);
+                  atlasData.imageUrl = pngUrl;
+                  render(); // Re-render when image loads
+                };
+                img.onerror = () => console.warn(`Failed to load PNG: ${pngUrl}`);
+                img.src = pngUrl;
+              }
+            } else {
+              console.warn(`Failed to load atlas: ${file}`);
+            }
+          }
+          // Load meta
+          const metaRes = await fetch(`/dist/${encodeURIComponent(name)}/character.meta.json`);
+          if (metaRes.ok) state.meta = await metaRes.json();
+          populateUI();
+          return true;
+        } catch (e) { info('Server fetch failed: ' + e); return false; }
+      }
+
+      function parseFiles(fileList) {
+        const files = Array.from(fileList);
+        console.log('Files loaded:', files.map(f => f.name));
+        console.log('Looking for frames_index.json...');
+        files.forEach(f => {
+          console.log(`File: "${f.name}", matches: ${f.name === 'frames_index.json'}, type: ${typeof f.name}, length: ${f.name.length}`);
+        });
+        const idxFile = files.find(f => f.name.trim() === 'frames_index.json');
+        const metaFile = files.find(f => f.name.endsWith('.meta.json') || f.name === 'character.meta.json');
+        console.log('idxFile found:', idxFile ? idxFile.name : 'NOT FOUND');
+        console.log('metaFile found:', metaFile ? metaFile.name : 'NOT FOUND');
+        if (!idxFile) { 
+          info('Missing frames_index.json. Files: ' + files.map(f => f.name).join(', ')); 
+          return; 
+        }
+        info('Loading files...');
+        Promise.all(files.map(f => f.text().then(t => ({name: f.name, text: t})))).then(items => {
+          const map = new Map(items.map(it => [it.name, it.text]));
+          const idx = JSON.parse(map.get('frames_index.json'));
+          state.layout = idx.layout || 'by-animation';
+          state.entries = idx.entries || [];
+          // Load referenced atlases
+          const atlasNames = Array.from(new Set(state.entries.map(e => e.file || `atlas_${idx.resolution}_${e.clip}.json`)));
+          atlasNames.forEach(name => {
+            if (!map.has(name)) return;
+            try { state.atlases.set(name, JSON.parse(map.get(name))); } catch {}
+          });
+          // Map dropped PNGs for later display
+          files.forEach(f => {
+            if (f.name.toLowerCase().endsWith('.png')) {
+              const url = URL.createObjectURL(f);
+              state.images.set(f.name, url);
+              console.log(`Stored PNG: ${f.name} -> ${url}`);
+            }
+          });
+          // Load meta if present
+          if (metaFile && map.has(metaFile.name)) {
+            try { state.meta = JSON.parse(map.get(metaFile.name)); } catch {}
+          }
+          info('Files loaded successfully!');
+          populateUI();
+        }).catch(err => {
+          console.error('Error details:', err);
+          info('Error parsing files: ' + err);
+        });
+      }
+
+      function populateUI() {
+        const clips = Array.from(new Set(state.entries.map(e => e.clip)));
+        ui.clip.innerHTML = clips.map(c => `<option value="${c}">${c}</option>`).join('');
+        if (clips.length) ui.clip.value = clips[0];
+        ui.dir.max = String(Math.max(0, (state.meta && state.meta.directions) || 8) - 1);
+        ui.dir.value = '0'; ui.dirVal.textContent = '0';
+        const frames = getFrameCount(ui.clip.value);
+        ui.frame.max = String(Math.max(0, frames - 1));
+        ui.frame.value = '0'; ui.frameVal.textContent = '0';
+        const fps = getFPS(ui.clip.value) || 12; ui.fps.value = String(fps);
+        setList([
+          `Layout: ${state.layout}`,
+          `Clips: ${clips.length}`,
+          `Atlases loaded: ${state.atlases.size}`,
+          state.meta ? `Directions: ${state.meta.directions}` : 'Directions: (unknown)',
+        ]);
+        render();
+        rebuildTimeline();
+      }
+
+      function getAtlasFor(clip, direction) {
+        if (state.layout === 'by-direction') {
+          const entry = state.entries.find(e => e.clip === clip && e.direction === direction);
+          if (!entry) return null;
+          const fj = state.atlases.get(entry.file);
+          if (fj && fj.image && !fj.imageUrl && state.images.has(fj.image)) fj.imageUrl = state.images.get(fj.image);
+          return fj;
+        } else {
+          const entry = state.entries.find(e => e.clip === clip);
+          if (!entry) return null;
+          const name = entry.file || `atlas_${(state.meta && state.meta.resolutions && state.meta.resolutions[0]) || 64}_${clip}.json`;
+          const fj = state.atlases.get(name);
+          if (fj && fj.image && !fj.imageUrl && state.images.has(fj.image)) fj.imageUrl = state.images.get(fj.image);
+          return fj;
+        }
+      }
+
+      function getRect(clip, direction, frameIndex) {
+        const atlas = getAtlasFor(clip, direction);
+        if (!atlas) return null;
+        const id = `${clip}_${direction}_${frameIndex}`;
+        return atlas.rects.find(r => String(r.id) === id) || null;
+      }
+
+      function getFrameCount(clip) {
+        const anim = state.meta && state.meta.animations && state.meta.animations[clip];
+        if (anim && typeof anim.frames === 'number') return anim.frames;
+        // fallback: max frame index from rect ids
+        const dirs = Number((state.meta && state.meta.directions) || 8);
+        let maxF = 0;
+        for (let d=0; d<dirs; d++) {
+          const atlas = getAtlasFor(clip, d);
+          if (!atlas) continue;
+          atlas.rects.forEach(r => { const m = String(r.id).match(/_(\d+)$/); if (m) maxF = Math.max(maxF, Number(m[1])+1); });
+        }
+        return maxF || 0;
+      }
+
+      function getFPS(clip) {
+        const anim = state.meta && state.meta.animations && state.meta.animations[clip];
+        return anim && anim.fps || 12;
+      }
+
+      function rebuildTimeline() {
+        ui.timelineBar.innerHTML = '';
+        const clip = ui.clip.value;
+        const frames = getFrameCount(clip) || 1;
+        const events = (state.meta && state.meta.animations && state.meta.animations[clip] && state.meta.animations[clip].events) || [];
+        events.forEach(ev => {
+          const x = (ev.frame / Math.max(1, frames-1)) * 100;
+          const mk = document.createElement('div'); mk.className = 'marker'; mk.style.left = x + '%';
+          const label = document.createElement('div'); label.className = 'eventLabel'; label.textContent = ev.type || 'event'; mk.appendChild(label);
+          ui.timelineBar.appendChild(mk);
+        });
+      }
+
+      function render() {
+        const ctx = ui.cv.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0,0,ui.cv.width, ui.cv.height);
+        const clip = ui.clip.value; const dir = Number(ui.dir.value)||0; const fi = Number(ui.frame.value)||0;
+        const rect = getRect(clip, dir, fi);
+        if (!rect) { drawMessage(ctx, 'No rect for selection'); return; }
+        const scale = state.zoom;
+        const pad = 16;
+        const ox = pad; const oy = pad;
+        const fw = rect.w * scale; const fh = rect.h * scale;
+        // Frame background
+        ctx.fillStyle = '#0a0f14'; ctx.fillRect(ox-1, oy-1, fw+2, fh+2);
+        const atlas = getAtlasFor(clip, dir);
+        if (atlas && (atlas.image || atlas.imageUrl)) {
+          let src = atlas.imageUrl || atlas.image;
+          if (src && !src.startsWith('blob:') && !src.startsWith('/')) {
+            const qs = new URLSearchParams(location.search);
+            const name = qs.get('character');
+            if (name) src = `/dist/${encodeURIComponent(name)}/${src}`;
+          }
+          return drawAtlasSubImage(ctx, src, rect, ox, oy, scale).then(() => drawOverlays())
+            .catch(() => { drawBounds(); drawOverlays(); });
+        }
+        drawBounds();
+        drawOverlays();
+
+        function drawBounds() {
+          ctx.strokeStyle = '#2e3c4b'; ctx.lineWidth = 1; ctx.strokeRect(ox, oy, fw, fh);
+        }
+        function drawOverlays() {
+        // Anchors
+        if (ui.showAnchors.checked) {
+          const anchors = (state.meta && state.meta.animations && state.meta.animations[clip] && state.meta.animations[clip].anchors) || {};
+          Object.entries(anchors).forEach(([name, pt]) => {
+            const x = ox + (pt[0]||0)*scale; const y = oy + (pt[1]||0)*scale;
+            ctx.fillStyle = 'rgba(112,176,255,0.9)'; ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#9fb3c8'; ctx.font='10px monospace'; ctx.fillText(name, x+6, y-4);
+          });
+        }
+        // Hitboxes
+        if (ui.showHitboxes.checked) {
+          const hb = (state.meta && state.meta.animations && state.meta.animations[clip] && state.meta.animations[clip].hitboxes) || [];
+          hb.forEach(h => {
+            const [a,b] = h.frameRange || [0,0]; if (fi < a || fi > b) return;
+            const [x,y,w,hh] = h.rect || [0,0,0,0];
+            ctx.strokeStyle = '#f7b267'; ctx.setLineDash([4,2]); ctx.strokeRect(ox + x*scale, oy + y*scale, w*scale, hh*scale); ctx.setLineDash([]);
+          });
+        }
+        // Event label if present on this frame
+        if (ui.showEvents.checked) {
+          const events = (state.meta && state.meta.animations && state.meta.animations[clip] && state.meta.animations[clip].events) || [];
+          const here = events.filter(e => Number(e.frame) === fi);
+          if (here.length) {
+            ctx.fillStyle = '#f7b267'; ctx.font='12px monospace';
+            ctx.fillText(here.map(e=>e.type||'event').join(', '), ox, oy + fh + 14);
+          }
+        }
+        // Current frame info
+        ctx.fillStyle = '#9fb3c8'; ctx.font='12px monospace';
+        ctx.fillText(`clip=${clip} dir=${dir} frame=${fi} size=${rect.w}x${rect.h}`, ox, oy - 6);
+        }
+      }
+
+      const imageCache = new Map();
+      function drawAtlasSubImage(ctx, src, rect, ox, oy, scale) {
+        return new Promise((resolve, reject) => {
+          if (!src) return reject(new Error('no image'));
+          if (imageCache.has(src)) {
+            const img = imageCache.get(src);
+            try { ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, ox, oy, rect.w*scale, rect.h*scale); resolve(); } catch(e){ reject(e); }
+            return;
+          }
+          const img = new Image();
+          img.onload = () => { imageCache.set(src, img); try { ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, ox, oy, rect.w*scale, rect.h*scale); resolve(); } catch(e){ reject(e); } };
+          img.onerror = () => reject(new Error('img load failed'));
+          img.src = src;
+        });
+      }
+
+      function drawMessage(ctx, msg) {
+        ctx.fillStyle = '#0a0f14'; ctx.fillRect(0,0,ui.cv.width, ui.cv.height);
+        ctx.fillStyle = '#9fb3c8'; ctx.font='14px system-ui, sans-serif'; ctx.fillText(msg, 12, 24);
+      }
+
+      function tick() {
+        const fps = Math.max(1, Math.min(60, Number(ui.fps.value)||12));
+        const ms = 1000/fps;
+        const next = () => {
+          const frames = getFrameCount(ui.clip.value) || 1;
+          let f = Number(ui.frame.value)||0; f = (f+1) % frames; ui.frame.value = String(f); ui.frameVal.textContent = String(f);
+          render();
+          if (state.playId) state.playId = setTimeout(next, ms);
+        };
+        state.playId = setTimeout(next, ms);
+      }
+
+      // Events
+      ui.file.addEventListener('change', (e) => parseFiles(e.target.files));
+      ui.drop.addEventListener('dragover', (e) => { e.preventDefault(); ui.drop.style.borderColor = '#3b88ff';});
+      ui.drop.addEventListener('dragleave', (e) => { ui.drop.style.borderColor = '#2a3542';});
+      ui.drop.addEventListener('drop', (e) => { e.preventDefault(); ui.drop.style.borderColor = '#2a3542'; parseFiles(e.dataTransfer.files); });
+      ui.clip.addEventListener('change', () => { const frames = getFrameCount(ui.clip.value); ui.frame.max = String(Math.max(0, frames - 1)); ui.frame.value='0'; ui.frameVal.textContent='0'; ui.fps.value=String(getFPS(ui.clip.value)||12); rebuildTimeline(); render(); });
+      ui.dir.addEventListener('input', () => { ui.dirVal.textContent = ui.dir.value; render(); });
+      ui.frame.addEventListener('input', () => { ui.frameVal.textContent = ui.frame.value; render(); });
+      ui.showAnchors.addEventListener('change', render);
+      ui.showEvents.addEventListener('change', render);
+      ui.showHitboxes.addEventListener('change', render);
+      ui.prev.addEventListener('click', () => { const frames = getFrameCount(ui.clip.value)||1; let f = Number(ui.frame.value)||0; f = (f-1+frames)%frames; ui.frame.value=String(f); ui.frameVal.textContent=String(f); render(); });
+      ui.next.addEventListener('click', () => { const frames = getFrameCount(ui.clip.value)||1; let f = Number(ui.frame.value)||0; f = (f+1)%frames; ui.frame.value=String(f); ui.frameVal.textContent=String(f); render(); });
+      ui.play.addEventListener('click', () => { if (state.playId) { clearTimeout(state.playId); state.playId=0; ui.play.textContent='Play'; } else { ui.play.textContent='Pause'; tick(); } });
+      // Initial
+      info('Load: frames_index.json, atlas_*.json, character.meta.json');
+      tryFetchFromServer().then(ok => { if (!ok) render(); });
+    </script>
+  </body>
+  </html>

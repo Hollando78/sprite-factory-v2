@@ -1,0 +1,26 @@
+{
+  "$id": "https://spritefactory.dev/schemas/animationset.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Sprite Factory Animation Set",
+  "type": "object",
+  "required": ["retargetProfile", "clips"],
+  "properties": {
+    "retargetProfile": { "type": "string" },
+    "clips": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["src", "frames"],
+        "properties": {
+          "src": { "type": "string" },
+          "loop": { "type": "boolean" },
+          "frames": { "type": "integer" },
+          "fps": { "type": "number" },
+          "markers": { "type": "object", "additionalProperties": { "type": "integer" } }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

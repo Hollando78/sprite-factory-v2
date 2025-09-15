@@ -1,0 +1,21 @@
+{
+  "name": "@sprite-factory/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sprite Factory CLI (scaffold)",
+  "license": "UNLICENSED",
+  "bin": {
+    "sf": "./bin/sf"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node ./bin/sf",
+    "dev": "node ./bin/sf"
+  },
+  "dependencies": {
+    "sharp": "^0.33.0"
+  }
+}

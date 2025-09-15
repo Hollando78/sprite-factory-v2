@@ -1,0 +1,8 @@
+{
+  "name": "@sprite-factory/pack",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "type": "commonjs",
+  "description": "Deterministic atlas packer (stub)"
+}

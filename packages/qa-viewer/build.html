@@ -1,0 +1,296 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sprite Factory Build Interface</title>
+    <style>
+      :root { --bg:#0b0d10; --fg:#e8eef6; --muted:#9fb3c8; --accent:#70b0ff; --success:#22c55e; --warning:#f59e0b; --error:#ef4444; }
+      html, body { height: 100%; }
+      body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--fg); padding: 20px; }
+      .container { max-width: 1000px; margin: 0 auto; }
+      h1, h2 { color: var(--accent); }
+      .card { background: #12161d; border: 1px solid #1e2732; border-radius: 8px; padding: 20px; margin: 20px 0; }
+      .form-group { margin: 15px 0; }
+      label { display: block; margin-bottom: 5px; color: var(--muted); font-weight: 500; }
+      input, select, textarea { 
+        width: 100%; padding: 8px 12px; background: #0f1419; border: 1px solid #1e2732; 
+        border-radius: 6px; color: var(--fg); font-size: 14px; box-sizing: border-box;
+      }
+      button { 
+        background: var(--accent); color: white; border: none; padding: 10px 20px; 
+        border-radius: 6px; cursor: pointer; font-size: 14px; margin: 5px 10px 5px 0;
+      }
+      button:hover { opacity: 0.9; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .success { background: var(--success); }
+      .warning { background: var(--warning); }
+      .error { background: var(--error); }
+      .log { 
+        background: #0a0f14; border: 1px solid #1e2732; padding: 15px; margin: 10px 0;
+        font-family: 'Courier New', monospace; font-size: 12px; max-height: 400px; overflow-y: auto;
+        white-space: pre-wrap;
+      }
+      .status { 
+        padding: 10px 15px; border-radius: 6px; margin: 10px 0; font-weight: 500;
+        border-left: 4px solid;
+      }
+      .status.success { background: rgba(34, 197, 94, 0.1); border-color: var(--success); color: var(--success); }
+      .status.warning { background: rgba(245, 158, 11, 0.1); border-color: var(--warning); color: var(--warning); }
+      .status.error { background: rgba(239, 68, 68, 0.1); border-color: var(--error); color: var(--error); }
+      .row { display: flex; gap: 20px; align-items: end; }
+      .row .form-group { flex: 1; margin: 0; }
+      .nav { margin-bottom: 20px; }
+      .nav a { color: var(--accent); text-decoration: none; margin-right: 20px; }
+      .nav a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="nav">
+        <a href="/">← QA Viewer</a>
+        <a href="/build.html">Build Interface</a>
+        <a href="/preview.html">3D Preview</a>
+      </div>
+      
+      <h1>Sprite Factory Build Interface</h1>
+      
+      <div class="card">
+        <h2>Build Configuration</h2>
+        <div class="form-group">
+          <label>Character File:</label>
+          <select id="characterFile">
+            <option value="samples/characters/warrior.json">Warrior</option>
+          </select>
+        </div>
+        
+        <div class="row">
+          <div class="form-group">
+            <label>Resolution:</label>
+            <select id="resolution">
+              <option value="32">32px</option>
+              <option value="64" selected>64px</option>
+              <option value="128">128px</option>
+              <option value="256">256px</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Directions:</label>
+            <select id="directions">
+              <option value="4">4 directions</option>
+              <option value="8" selected>8 directions</option>
+              <option value="16">16 directions</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Mode:</label>
+            <select id="buildMode">
+              <option value="no-blender">JSON only (no 3D rendering)</option>
+              <option value="with-blender">Full build with Blender</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Actions</h2>
+        <button id="btnInspect">Inspect Assets</button>
+        <button id="btnPlan">Plan Build</button>
+        <button id="btnBuild">Start Build</button>
+        <button id="btnValidate">Validate Character</button>
+        <button id="btnClean">Clean Output</button>
+        <button id="btnViewResult" style="background: var(--success)">View Result</button>
+      </div>
+
+      <div id="inspectionPanel" class="card" style="display: none;">
+        <h2>Asset Inspection</h2>
+        <div id="inspectionContent"></div>
+      </div>
+
+      <div id="status"></div>
+      <div id="logContainer"></div>
+    </div>
+
+    <script>
+      const ui = {
+        characterFile: document.getElementById('characterFile'),
+        resolution: document.getElementById('resolution'),
+        directions: document.getElementById('directions'),
+        buildMode: document.getElementById('buildMode'),
+        btnInspect: document.getElementById('btnInspect'),
+        btnPlan: document.getElementById('btnPlan'),
+        btnBuild: document.getElementById('btnBuild'),
+        btnValidate: document.getElementById('btnValidate'),
+        btnClean: document.getElementById('btnClean'),
+        btnViewResult: document.getElementById('btnViewResult'),
+        status: document.getElementById('status'),
+        logContainer: document.getElementById('logContainer'),
+        inspectionPanel: document.getElementById('inspectionPanel'),
+        inspectionContent: document.getElementById('inspectionContent')
+      };
+
+      function showStatus(message, type = 'success') {
+        ui.status.innerHTML = `<div class="status ${type}">${message}</div>`;
+      }
+
+      function addLog(title, content) {
+        const logDiv = document.createElement('div');
+        logDiv.innerHTML = `<h3>${title}</h3><div class="log">${content}</div>`;
+        ui.logContainer.appendChild(logDiv);
+        logDiv.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      async function runCommand(endpoint, data = {}) {
+        try {
+          showStatus('Running command...', 'warning');
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          
+          const result = await response.json();
+          
+          if (result.success) {
+            showStatus(result.message || 'Command completed successfully', 'success');
+            if (result.output) addLog(result.title || 'Output', result.output);
+          } else {
+            showStatus(result.message || 'Command failed', 'error');
+            if (result.output) addLog('Error Output', result.output);
+          }
+          
+          return result;
+        } catch (error) {
+          showStatus(`Error: ${error.message}`, 'error');
+          return { success: false, error: error.message };
+        }
+      }
+
+      function getConfig() {
+        return {
+          character: ui.characterFile.value,
+          resolution: parseInt(ui.resolution.value),
+          directions: parseInt(ui.directions.value),
+          useBlender: ui.buildMode.value === 'with-blender'
+        };
+      }
+
+      function renderInspection(data) {
+        const { character, assets, animationSet } = data;
+        
+        let html = `
+          <h3>Character: ${character.name}</h3>
+          <p><strong>Seed:</strong> ${character.seed}</p>
+          
+          <h4>🎯 Rig</h4>
+        `;
+        
+        if (assets.rig) {
+          const status = assets.rig.exists ? '✅' : '❌';
+          html += `
+            <div style="margin: 10px 0; padding: 10px; background: ${assets.rig.exists ? '#1a3d2e' : '#3d1a1a'}; border-radius: 6px;">
+              ${status} <strong>${assets.rig.path}</strong><br>
+              ${assets.rig.exists ? `Size: ${(assets.rig.size / 1024 / 1024).toFixed(2)}MB` : 'File not found'}
+            </div>
+          `;
+        } else {
+          html += `<p>No rig specified</p>`;
+        }
+        
+        html += `<h4>🎬 Animations (${animationSet ? animationSet.retargetProfile : 'None'})</h4>`;
+        
+        if (assets.animations.length > 0) {
+          for (const anim of assets.animations) {
+            const status = anim.exists ? '✅' : '❌';
+            html += `
+              <div style="margin: 5px 0; padding: 8px; background: ${anim.exists ? '#1a3d2e' : '#3d1a1a'}; border-radius: 4px; font-size: 14px;">
+                ${status} <strong>${anim.name}</strong> - ${anim.frames} frames @ ${anim.fps || 24}fps ${anim.loop ? '(loop)' : ''}<br>
+                <code style="color: #9fb3c8;">${anim.path}</code>
+              </div>
+            `;
+          }
+        } else {
+          html += `<p>No animations found</p>`;
+        }
+        
+        if (assets.textures.length > 0) {
+          html += `<h4>🖼️ Textures</h4>`;
+          for (const tex of assets.textures) {
+            const status = tex.exists ? '✅' : '❌';
+            html += `
+              <div style="margin: 5px 0; padding: 8px; background: ${tex.exists ? '#1a3d2e' : '#3d1a1a'}; border-radius: 4px; font-size: 14px;">
+                ${status} <strong>${tex.type}</strong><br>
+                <code style="color: #9fb3c8;">${tex.path}</code>
+              </div>
+            `;
+          }
+        }
+        
+        if (assets.equipment.length > 0) {
+          html += `<h4>⚔️ Equipment</h4>`;
+          for (const equip of assets.equipment) {
+            const status = equip.exists ? '✅' : '❌';
+            html += `
+              <div style="margin: 5px 0; padding: 8px; background: ${equip.exists ? '#1a3d2e' : '#3d1a1a'}; border-radius: 4px; font-size: 14px;">
+                ${status} <strong>${equip.mount}</strong> (layer ${equip.layer})<br>
+                <code style="color: #9fb3c8;">${equip.path}</code>
+              </div>
+            `;
+          }
+        }
+        
+        ui.inspectionContent.innerHTML = html;
+        ui.inspectionPanel.style.display = 'block';
+        ui.inspectionPanel.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      ui.btnInspect.addEventListener('click', async () => {
+        try {
+          showStatus('Inspecting assets...', 'warning');
+          const response = await fetch('/api/content/inspect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ characterPath: ui.characterFile.value })
+          });
+          
+          const result = await response.json();
+          
+          if (result.success) {
+            showStatus('Assets inspected successfully', 'success');
+            renderInspection(result);
+          } else {
+            showStatus(result.message || 'Inspection failed', 'error');
+          }
+        } catch (error) {
+          showStatus(`Error: ${error.message}`, 'error');
+        }
+      });
+
+      ui.btnPlan.addEventListener('click', () => {
+        runCommand('/api/plan', getConfig());
+      });
+
+      ui.btnBuild.addEventListener('click', () => {
+        runCommand('/api/build', getConfig());
+      });
+
+      ui.btnValidate.addEventListener('click', () => {
+        runCommand('/api/validate', getConfig());
+      });
+
+      ui.btnClean.addEventListener('click', () => {
+        if (confirm('This will delete all generated files. Continue?')) {
+          runCommand('/api/clean', getConfig());
+        }
+      });
+
+      ui.btnViewResult.addEventListener('click', () => {
+        const characterName = ui.characterFile.value.split('/').pop().replace('.json', '');
+        const name = characterName.charAt(0).toUpperCase() + characterName.slice(1) + '_M01';
+        window.open(`/?character=${encodeURIComponent(name)}`, '_blank');
+      });
+
+      showStatus('Ready to build sprites', 'success');
+    </script>
+  </body>
+</html>

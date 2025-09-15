@@ -1,0 +1,25 @@
+{
+  "$schema": "https://spritefactory.dev/schemas/project.json",
+  "seed": 123456,
+  "outputDir": "./dist",
+  "cacheDir": "./.cache",
+  "directions": 8,
+  "projection": "isometric",
+  "camera": {
+    "isoAngle": 30,
+    "distance": 8.5,
+    "height": 1.7,
+    "orthoScale": 2.0
+  },
+  "lighting": {
+    "key": { "intensity": 1200, "angle": [45, 35] },
+    "fill": { "intensity": 300, "angle": [-60, 10] },
+    "rim":  { "intensity": 900, "angle": [140, 25] }
+  },
+  "resolutions": [32, 64, 128, 256],
+  "passes": ["beauty", "shadow", "mask", "outline"],
+  "palette": {
+    "enabled": true,
+    "maskChannels": { "primary": "R", "secondary": "G", "accent": "B" }
+  }
+}

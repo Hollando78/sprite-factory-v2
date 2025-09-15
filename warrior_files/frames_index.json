@@ -1,0 +1,32 @@
+{
+  "layout": "by-animation",
+  "resolution": 64,
+  "directions": 8,
+  "entries": [
+    {
+      "clip": "walk",
+      "file": "atlas_64_walk.json",
+      "image": "atlas_64_walk.png"
+    },
+    {
+      "clip": "run",
+      "file": "atlas_64_run.json",
+      "image": "atlas_64_run.png"
+    },
+    {
+      "clip": "attack_slash",
+      "file": "atlas_64_attack_slash.json",
+      "image": "atlas_64_attack_slash.png"
+    },
+    {
+      "clip": "hit",
+      "file": "atlas_64_hit.json",
+      "image": "atlas_64_hit.png"
+    },
+    {
+      "clip": "die",
+      "file": "atlas_64_die.json",
+      "image": "atlas_64_die.png"
+    }
+  ]
+}

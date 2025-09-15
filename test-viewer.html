@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test File Loader</title>
+</head>
+<body>
+    <h1>File Test</h1>
+    <input type="file" id="fileInput" multiple>
+    <div id="output"></div>
+    
+    <script>
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            const output = document.getElementById('output');
+            
+            output.innerHTML = '<h2>Files loaded:</h2>';
+            files.forEach(file => {
+                output.innerHTML += `<p>${file.name} - ${file.size} bytes</p>`;
+                
+                if (file.name === 'frames_index.json') {
+                    file.text().then(text => {
+                        try {
+                            const json = JSON.parse(text);
+                            output.innerHTML += `<p style="color:green">✓ frames_index.json parsed successfully!</p>`;
+                            output.innerHTML += `<pre>${JSON.stringify(json, null, 2).substring(0, 500)}</pre>`;
+                        } catch(e) {
+                            output.innerHTML += `<p style="color:red">✗ Error parsing frames_index.json: ${e}</p>`;
+                        }
+                    });
+                }
+            });
+            
+            const hasFramesIndex = files.some(f => f.name === 'frames_index.json');
+            if (!hasFramesIndex) {
+                output.innerHTML += `<p style="color:red">✗ Missing frames_index.json</p>`;
+            }
+        });
+    </script>
+</body>
+</html>

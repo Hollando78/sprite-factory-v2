@@ -1,0 +1,494 @@
+#!/usr/bin/env node
+/*
+  Minimal `sf` CLI scaffold with no external deps.
+  Commands: init, validate, plan
+*/
+const fs = require('fs');
+const path = require('path');
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+function printHelp() {
+  console.log(`Sprite Factory CLI (scaffold)\n\nUsage:\n  sf <command> [options]\n\nCommands:\n  init                                   Initialize project in current directory\n  validate <character.json>              Validate character and referenced files (minimal)\n  plan <character.json> [--res N] [--directions N]   Dry-run plan summary\n\nExamples:\n  sf init\n  sf validate samples/characters/warrior.json\n  sf plan samples/characters/warrior.json --res 64 --directions 8\n`);
+}
+
+function readJSON(file) {
+  const text = fs.readFileSync(file, 'utf8');
+  try { return JSON.parse(text); } catch (e) {
+    throw new Error(`Invalid JSON in ${file}: ${e.message}`);
+  }
+}
+
+function ensureDir(p) {
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+}
+
+function cmdInit(cwd) {
+  const cfgPath = path.join(cwd, 'spritefactory.config.json');
+  if (!fs.existsSync(cfgPath)) {
+    const config = {
+      $schema: "https://spritefactory.dev/schemas/project.json",
+      seed: 123456,
+      outputDir: "./dist",
+      cacheDir: "./.cache",
+      directions: 8,
+      projection: "isometric",
+      camera: { isoAngle: 30, distance: 8.5, height: 1.7, orthoScale: 2.0 },
+      lighting: {
+        key: { intensity: 1200, angle: [45, 35] },
+        fill: { intensity: 300, angle: [-60, 10] },
+        rim:  { intensity: 900, angle: [140, 25] }
+      },
+      resolutions: [32, 64, 128, 256],
+      passes: ["beauty", "shadow", "mask", "outline"],
+      palette: { enabled: true, maskChannels: { primary: "R", secondary: "G", accent: "B" } }
+    };
+    fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2));
+    console.log(`Created ${cfgPath}`);
+  } else {
+    console.log(`Exists ${cfgPath}`);
+  }
+  ['characters','animationSets','rigs','gear','skins','dist','.cache'].forEach(dir => ensureDir(path.join(cwd, dir)));
+  console.log('Initialized folders.');
+}
+
+function minimalValidateCharacter(charJsonPath) {
+  if (!fs.existsSync(charJsonPath)) throw new Error(`File not found: ${charJsonPath}`);
+  const character = readJSON(charJsonPath);
+  const { validate } = require('../lib/schemaValidator');
+  const schemaChar = readJSON(path.resolve(REPO_ROOT, 'packages', 'schemas', 'character.json'));
+  const schemaSet = readJSON(path.resolve(REPO_ROOT, 'packages', 'schemas', 'animationset.json'));
+  const errors = validate(character, schemaChar);
+
+  // Check referenced files existence when relative and plausible.
+  const baseDir = path.dirname(charJsonPath);
+  if (character.rig && character.rig.src) {
+    const rigPath = path.resolve(baseDir, character.rig.src);
+    if (!fs.existsSync(rigPath)) {
+      errors.push(`rig.src does not exist: ${character.rig.src}`);
+    }
+  }
+  // Validate animation set if resolvable
+  const setName = character.animations && character.animations.set;
+  const animSetPath = setName ? findAnimationSet(setName, charJsonPath) : null;
+  if (!animSetPath) {
+    errors.push(`animations.set '${setName}' not found`);
+  } else {
+    const animSet = readJSON(animSetPath);
+    const animErrs = validate(animSet, schemaSet);
+    animErrs.forEach(e => errors.push(`animationset: ${e}`));
+    // Verify the FBX src paths exist (best-effort)
+    const clips = animSet.clips || {};
+    for (const [clipName, clip] of Object.entries(clips)) {
+      const clipPath = path.resolve(path.dirname(animSetPath), clip.src);
+      if (!fs.existsSync(clipPath)) {
+        errors.push(`animationset.clips['${clipName}'].src missing: ${clip.src}`);
+      }
+    }
+  }
+
+  if (errors.length) {
+    console.error('Validation failed:');
+    errors.forEach(e => console.error(' - ' + e));
+    process.exitCode = 1;
+  } else {
+    console.log('OK: character + animation set validated against schemas.');
+  }
+}
+
+function findAnimationSet(setName, charJsonPath) {
+  // Try alongside the character file, then repo-level animationSets
+  const baseDir = path.dirname(path.resolve(charJsonPath));
+  const local = path.join(baseDir, 'animationSets', `${setName}.json`);
+  if (fs.existsSync(local)) return local;
+  const repo = path.join(REPO_ROOT, 'animationSets', `${setName}.json`);
+  if (fs.existsSync(repo)) return repo;
+  const samples = path.join(REPO_ROOT, 'samples', 'animationSets', `${setName}.json`);
+  if (fs.existsSync(samples)) return samples;
+  return null;
+}
+
+function cmdPlan(charJsonPath, opts) {
+  if (!fs.existsSync(charJsonPath)) throw new Error(`File not found: ${charJsonPath}`);
+  const character = readJSON(charJsonPath);
+  const directions = Number(opts.directions || 8);
+  const res = Number(opts.res || (character.export && character.export.masterResolution) || 256);
+  const setName = character.animations && character.animations.set;
+  let animSetPath = setName ? findAnimationSet(setName, charJsonPath) : null;
+  if (!animSetPath) {
+    console.log('Warning: Could not locate animation set file. Using empty set.');
+  }
+  const animSet = animSetPath ? readJSON(animSetPath) : { clips: {} };
+  const clips = animSet.clips || {};
+  const entries = Object.entries(clips);
+  const frameCounts = entries.map(([name, clip]) => ({ name, frames: Number(clip.frames || 0) }));
+  const totalFrames = frameCounts.reduce((a,c)=>a + c.frames, 0);
+  const frameTotalDirectional = totalFrames * directions;
+  console.log(`Plan Summary`);
+  console.log(` - Character: ${character.name || 'Unknown'}`);
+  console.log(` - Animation set: ${setName || 'N/A'}${animSetPath ? ` (${path.relative(process.cwd(), animSetPath)})` : ''}`);
+  console.log(` - Directions: ${directions}`);
+  console.log(` - Master resolution: ${res}px`);
+  console.log(` - Clips: ${entries.length}`);
+  frameCounts.forEach(fc => console.log(`   - ${fc.name}: ${fc.frames} frames`));
+  console.log(` - Total frames: ${totalFrames} x ${directions} dirs = ${frameTotalDirectional}`);
+  console.log(` - Outputs (est.): atlases per clip and resolution variants`);
+  if (opts['--emit-job']) {
+    const projectCfg = readProjectConfig(REPO_ROOT);
+    const outRoot = path.isAbsolute(projectCfg.outputDir)
+      ? projectCfg.outputDir
+      : path.join(REPO_ROOT, projectCfg.outputDir || 'dist');
+    const outDir = path.join(outRoot, character.name || 'character');
+    ensureDir(outDir);
+    const { jobPath } = emitBlenderJob(REPO_ROOT, charJsonPath, outDir, projectCfg, opts);
+    console.log(`Emitted job: ${jobPath}`);
+  }
+}
+
+function readProjectConfig(cwd) {
+  const local = path.join(cwd, 'spritefactory.config.json');
+  if (fs.existsSync(local)) return readJSON(local);
+  const samples = path.join(REPO_ROOT, 'samples', 'spritefactory.config.json');
+  if (fs.existsSync(samples)) return readJSON(samples);
+  return {
+    outputDir: path.join(cwd, 'dist'),
+    cacheDir: path.join(cwd, '.cache'),
+    directions: 8,
+    projection: 'isometric',
+    resolutions: [64, 128, 256],
+    passes: ['beauty','shadow','mask','outline']
+  };
+}
+
+function sha256OfText(text) {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+function ensureParentDir(filePath) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeJSON(filePath, obj) {
+  ensureParentDir(filePath);
+  fs.writeFileSync(filePath, JSON.stringify(obj, null, 2));
+}
+
+function emitBlenderJob(cwd, characterPath, outDir, projectCfg, opts) {
+  const job = {
+    jobId: new Date().toISOString().replace(/[:.]/g, '-'),
+    input: characterPath,
+    output: outDir,
+    temp: path.join(projectCfg.cacheDir || path.join(cwd, '.cache'), path.basename(outDir)),
+    directions: Number(opts.directions || projectCfg.directions || 8),
+    projection: opts.projection || projectCfg.projection || 'isometric',
+    passes: projectCfg.passes || ['beauty','shadow','mask','outline'],
+    camera: projectCfg.camera || {},
+    lighting: projectCfg.lighting || {},
+    resolution: Number(opts.res || (projectCfg.resolutions && projectCfg.resolutions[0]) || 256)
+  };
+  const jobPath = path.join(outDir, 'job.json');
+  writeJSON(jobPath, job);
+  return { job, jobPath };
+}
+
+function maybeRunBlender(jobPath, opts) {
+  const { spawnSync } = require('child_process');
+  const script = path.resolve(REPO_ROOT, 'packages', 'blender-scripts', 'main.py');
+  if (!fs.existsSync(script)) return { ok: false, ran: false };
+  const blenderBin = opts.blender || process.env.BLENDER_BIN;
+  let res;
+  if (blenderBin) {
+    res = spawnSync(blenderBin, ['-b', '-P', script, '--', '--job', jobPath], { stdio: 'inherit' });
+  } else {
+    res = spawnSync('python3', [script, '--', '--job', jobPath], { stdio: 'inherit' });
+  }
+  return { ok: res.status === 0, ran: true, method: blenderBin ? 'blender' : 'python' };
+}
+
+function buildStubOutputs(cwd, characterPath, opts) {
+  const character = readJSON(characterPath);
+  const projectCfg = readProjectConfig(cwd);
+  const outRoot = path.isAbsolute(projectCfg.outputDir)
+    ? projectCfg.outputDir
+    : path.join(REPO_ROOT, projectCfg.outputDir || 'dist');
+  const outDir = path.join(outRoot, character.name || 'character');
+  ensureDir(outDir);
+
+  // Load animation set
+  const setName = character.animations && character.animations.set;
+  const animSetPath = setName ? findAnimationSet(setName, characterPath) : null;
+  const animSet = animSetPath ? readJSON(animSetPath) : { clips: {} };
+  const { job, jobPath } = emitBlenderJob(REPO_ROOT, characterPath, outDir, projectCfg, opts);
+  if (animSet && animSet.retargetProfile) {
+    try {
+      const jobJson = readJSON(jobPath);
+      jobJson.retargetProfile = animSet.retargetProfile;
+      // Include clip summaries for Blender
+      jobJson.clips = Object.entries(animSet.clips || {}).map(([name, clip]) => ({ name, frames: Number(clip.frames||0), loop: !!clip.loop }));
+      // Include resolved rig and anim clip absolute paths
+      const charDir = path.dirname(characterPath);
+      if (character.rig && character.rig.src) {
+        jobJson.rigSrcAbs = path.resolve(charDir, character.rig.src);
+      }
+      const animClips = [];
+      if (animSetPath && animSet.clips) {
+        const setDir = path.dirname(animSetPath);
+        for (const [name, clip] of Object.entries(animSet.clips)) {
+          if (onlyClip && name !== onlyClip) continue;
+          const srcAbs = path.resolve(setDir, clip.src);
+          animClips.push({ name, src: srcAbs, frames: Number(clip.frames||0), loop: !!clip.loop });
+        }
+      }
+      jobJson.animClips = animClips;
+      writeJSON(jobPath, jobJson);
+    } catch(_) {}
+  }
+  if (!opts['--no-blender'] && !opts.noBlender && !opts.noblender) {
+    try { maybeRunBlender(jobPath, opts); } catch (_) {}
+  }
+
+  // animSet already loaded above
+  const clips = animSet.clips || {};
+  const onlyClip = opts.only || opts['--only'];
+
+  const directions = Number(opts.directions || projectCfg.directions || 8);
+  const res = Number(opts.res || (character.export && character.export.masterResolution) || (projectCfg.resolutions && projectCfg.resolutions[0]) || 256);
+
+  let packer;
+  try {
+    packer = require('@sprite-factory/pack');
+  } catch (e) {
+    const alt = path.resolve(REPO_ROOT, 'packages', 'pack', 'index.js');
+    packer = require(alt);
+  }
+  const perClip = {};
+  const layout = (opts.layout || 'by-animation');
+  const framesIndex = [];
+  for (const [name, clip] of Object.entries(clips)) {
+    if (onlyClip && name !== onlyClip) continue;
+    const frames = Number(clip.frames || 0);
+    if (layout === 'by-direction') {
+      for (let dir = 0; dir < directions; dir++) {
+        const entries = [];
+        for (let fi = 0; fi < frames; fi++) entries.push({ id: `${name}_${dir}_${fi}`, w: res, h: res });
+        const packed = packer.packFrames(entries);
+        ensureDir(path.join(outDir, `dir_${dir}`));
+        const framesJson = { clip: name, resolution: res, direction: dir, atlas: { width: packed.width, height: packed.height }, rects: packed.rects };
+        const fpath = path.join(outDir, `dir_${dir}`, `atlas_${res}_${name}.json`);
+        writeJSON(fpath, framesJson);
+        framesIndex.push({ clip: name, direction: dir, file: path.relative(outDir, fpath) });
+      }
+    } else {
+      const frameEntries = [];
+      for (let dir = 0; dir < directions; dir++) {
+        for (let fi = 0; fi < frames; fi++) frameEntries.push({ id: `${name}_${dir}_${fi}`, w: res, h: res });
+      }
+      const packed = packer.packFrames(frameEntries);
+      perClip[name] = packed;
+      const framesJson = { clip: name, resolution: res, directions, atlas: { width: packed.width, height: packed.height }, rects: packed.rects };
+      const fpath = path.join(outDir, `atlas_${res}_${name}.json`);
+      writeJSON(fpath, framesJson);
+      framesIndex.push({ clip: name, file: path.relative(outDir, fpath) });
+    }
+  }
+
+  const meta = {
+    version: 2,
+    character: character.name,
+    directions,
+    projection: projectCfg.projection || 'isometric',
+    resolutions: Array.from(new Set([res].concat(projectCfg.resolutions || []))).sort((a,b)=>a-b),
+    animations: Object.fromEntries(Object.keys(perClip).map(k => [k, { frames: (animSet.clips[k] && animSet.clips[k].frames) || 0, fps: (animSet.clips[k] && animSet.clips[k].fps) || 12 }]))
+  };
+  writeJSON(path.join(outDir, 'character.meta.json'), meta);
+  writeJSON(path.join(outDir, 'frames_index.json'), { layout, resolution: res, directions, entries: framesIndex });
+
+  const manifest = {};
+  const files = fs.readdirSync(outDir).filter(f => f.endsWith('.json'));
+  files.forEach(f => {
+    const text = fs.readFileSync(path.join(outDir, f), 'utf8');
+    manifest[f] = { sha256: sha256OfText(text), bytes: Buffer.byteLength(text) };
+  });
+  writeJSON(path.join(outDir, 'manifest.json'), { generatedAt: new Date().toISOString(), files: manifest });
+
+  console.log(`Built stub outputs to ${outDir}`);
+
+  // Try to compose PNG atlases from rendered frames if available and 'sharp' is installed
+  try {
+    const sharp = require('sharp');
+    const fsx = require('fs');
+    function fileExists(p) { try { return fsx.existsSync(p); } catch { return false; } }
+    async function composeAtlas(imageEntries, width, height, outputPath) {
+      const base = sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
+      const comps = imageEntries.map(e => ({ input: e.path, top: e.y, left: e.x }));
+      await base.composite(comps).png().toFile(outputPath);
+    }
+    const jobs = [];
+    for (const entry of framesIndex) {
+      const file = path.join(outDir, entry.file);
+      const framesJson = readJSON(file);
+      const rects = framesJson.rects || [];
+      const clip = framesJson.clip;
+      const atlasW = framesJson.atlas.width; const atlasH = framesJson.atlas.height;
+      const dir = framesJson.direction;
+      // Resolve source frame paths
+      const imgEntries = [];
+      if (typeof dir === 'number') {
+        // by-direction: frames stored under frames_<clip>/dir_<dir>/
+        const dirPath = path.join(outDir, `frames_${clip}`, `dir_${dir}`);
+        if (!fileExists(dirPath)) continue;
+        // rects are ordered; assume file names 0000.png..frames-1
+        rects.forEach(r => {
+          const m = String(r.id).match(/_(\d+)$/);
+          const fi = m ? Number(m[1]) : 0;
+          const p = path.join(dirPath, `${String(fi).padStart(4,'0')}.png`);
+          if (fileExists(p)) imgEntries.push({ path: p, x: r.x, y: r.y });
+        });
+        const outPngRel = path.join(path.dirname(entry.file), `atlas_${framesJson.resolution}_${clip}.png`);
+        const outPng = path.join(outDir, outPngRel);
+        jobs.push((async () => { await composeAtlas(imgEntries, atlasW, atlasH, outPng); framesJson.image = outPngRel; writeJSON(file, framesJson); })());
+      } else {
+        // by-animation: frames under frames_<clip>/dir_<d>/
+        for (let d = 0; d < directions; d++) {
+          const dirPath = path.join(outDir, `frames_${clip}`, `dir_${d}`);
+          rects.filter(r => String(r.id).startsWith(`${clip}_${d}_`)).forEach(r => {
+            const m = String(r.id).match(/_(\d+)$/);
+            const fi = m ? Number(m[1]) : 0;
+            const p = path.join(dirPath, `${String(fi).padStart(4,'0')}.png`);
+            if (fileExists(p)) imgEntries.push({ path: p, x: r.x, y: r.y });
+          });
+        }
+        const outPngRel = `atlas_${framesJson.resolution}_${clip}.png`;
+        const outPng = path.join(outDir, outPngRel);
+        jobs.push((async () => { await composeAtlas(imgEntries, atlasW, atlasH, outPng); framesJson.image = outPngRel; writeJSON(file, framesJson); })());
+      }
+    }
+    Promise.all(jobs).then(() => {
+      // Update frames_index entries to include image if available
+      const idxPath = path.join(outDir, 'frames_index.json');
+      const idx = readJSON(idxPath);
+      idx.entries = idx.entries.map(e => {
+        try {
+          const fj = readJSON(path.join(outDir, e.file));
+          if (fj && fj.image) e.image = fj.image;
+        } catch {}
+        return e;
+      });
+      writeJSON(idxPath, idx);
+      console.log('PNG atlases composed.');
+    }).catch(err => console.error('Atlas composition failed:', err));
+  } catch (e) {
+    console.log('sharp not available; skipped PNG atlas composition.');
+  }
+}
+
+function cmdBakeMeta(distDir) {
+  const outDir = path.resolve(process.cwd(), distDir);
+  if (!fs.existsSync(outDir) || !fs.statSync(outDir).isDirectory()) {
+    throw new Error(`Not a directory: ${outDir}`);
+  }
+  const jobPath = path.join(outDir, 'job.json');
+  if (!fs.existsSync(jobPath)) throw new Error(`Missing job.json in ${outDir}`);
+  const job = readJSON(jobPath);
+  const characterPath = job.input;
+  const character = fs.existsSync(characterPath) ? readJSON(characterPath) : {};
+  const setName = character.animations && character.animations.set;
+  const animSetPath = setName ? findAnimationSet(setName, characterPath) : null;
+  const animSet = animSetPath && fs.existsSync(animSetPath) ? readJSON(animSetPath) : { clips: {} };
+  const clips = animSet.clips || {};
+
+  const metaPath = path.join(outDir, 'character.meta.json');
+  const meta = fs.existsSync(metaPath) ? readJSON(metaPath) : { version: 2, character: character.name };
+  const animationsMeta = meta.animations || {};
+  for (const [clipName, clip] of Object.entries(clips)) {
+    const frames = Number(clip.frames || 0);
+    const fps = Number(clip.fps || 12);
+    const entry = animationsMeta[clipName] || {};
+    entry.frames = frames;
+    entry.fps = fps;
+    entry.anchors = entry.anchors || { hand_r: [Math.round(0.75 * 64), Math.round(0.6 * 64)] };
+    const events = [];
+    if (/run|walk/i.test(clipName)) {
+      const step1 = Math.max(0, Math.round(frames * 0.25));
+      const step2 = Math.max(0, Math.round(frames * 0.75));
+      events.push({ frame: step1, type: 'footstep' }, { frame: step2, type: 'footstep' });
+    }
+    if (/attack/i.test(clipName)) {
+      if (clip.markers && typeof clip.markers.impact === 'number') {
+        events.push({ frame: clip.markers.impact, type: 'impact' });
+      } else {
+        events.push({ frame: Math.max(0, Math.round(frames * 0.5)), type: 'impact' });
+      }
+    }
+    entry.events = events;
+    if (events.find(e => e.type === 'impact')) {
+      const f = events.find(e => e.type === 'impact').frame;
+      entry.hitboxes = [{ frameRange: [Math.max(0, f-1), Math.min(frames-1, f+1)], rect: [6, 12, 20, 10] }];
+    }
+    animationsMeta[clipName] = entry;
+  }
+  meta.animations = animationsMeta;
+  writeJSON(metaPath, meta);
+  console.log(`Baked metadata: ${metaPath}`);
+}
+
+function parseArgs(argv) {
+  const args = argv.slice(2);
+  const cmd = args[0];
+  const rest = args.slice(1);
+  const opts = {};
+  for (let i=0; i<rest.length; i++) {
+    const a = rest[i];
+    if (a === '--res') { opts.res = rest[++i]; continue; }
+    if (a === '--directions') { opts.directions = rest[++i]; continue; }
+    if (a === '--layout') { opts.layout = rest[++i]; continue; }
+    if (a === '--projection') { opts.projection = rest[++i]; continue; }
+    if (a === '--blender') { opts.blender = rest[++i]; continue; }
+    if (a === '--only') { opts.only = rest[++i]; continue; }
+    if (a === '--no-blender') { opts['--no-blender'] = true; continue; }
+    if (a === '--emit-job') { opts['--emit-job'] = true; continue; }
+    if (!opts._) opts._ = [];
+    opts._.push(a);
+  }
+  return { cmd, opts };
+}
+
+(function main() {
+  const { cmd, opts } = parseArgs(process.argv);
+  const cwd = process.cwd();
+  try {
+    if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') { printHelp(); return; }
+    if (cmd === 'init') { cmdInit(cwd); return; }
+    if (cmd === 'validate') {
+      const file = opts._ && opts._[0];
+      if (!file) throw new Error('Usage: sf validate <character.json>');
+      minimalValidateCharacter(path.resolve(cwd, file));
+      return;
+    }
+    if (cmd === 'plan') {
+      const file = opts._ && opts._[0];
+      if (!file) throw new Error('Usage: sf plan <character.json> [--res N] [--directions N]');
+      cmdPlan(path.resolve(cwd, file), opts);
+      return;
+    }
+    if (cmd === 'build') {
+      const file = opts._ && opts._[0];
+      if (!file) throw new Error('Usage: sf build <character.json> [--res N] [--directions N] [--projection P] [--layout L] [--only clip] [--no-blender]');
+      buildStubOutputs(cwd, path.resolve(cwd, file), opts);
+      return;
+    }
+    if (cmd === 'bake-meta') {
+      const dir = opts._ && opts._[0];
+      if (!dir) throw new Error('Usage: sf bake-meta <dist/character>');
+      cmdBakeMeta(dir);
+      return;
+    }
+    console.error(`Unknown command: ${cmd}`);
+    printHelp();
+    process.exitCode = 1;
+  } catch (err) {
+    console.error(String(err && err.message || err));
+    process.exitCode = 1;
+  }
+})();

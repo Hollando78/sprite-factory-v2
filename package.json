@@ -1,0 +1,11 @@
+{
+  "name": "sprite-factory-v2",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

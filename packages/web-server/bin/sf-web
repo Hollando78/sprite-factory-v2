@@ -1,0 +1,335 @@
+#!/usr/bin/env node
+// Minimal static server for QA viewer + dist hosting (no external deps)
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
+
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const QA_DIR = path.join(REPO_ROOT, 'packages', 'qa-viewer');
+const DIST_DIR = path.join(REPO_ROOT, 'dist');
+const PORT = Number(process.env.PORT || 5173);
+const HOST = process.env.HOST || '127.0.0.1';
+
+function send(res, code, body, headers={}) { res.writeHead(code, headers); res.end(body); }
+function sendJson(res, code, obj) { send(res, code, JSON.stringify(obj), { 'Content-Type': 'application/json' }); }
+function notFound(res) { send(res, 404, 'Not found'); }
+function mimeType(file) {
+  if (file.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (file.endsWith('.js')) return 'application/javascript; charset=utf-8';
+  if (file.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (file.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (file.endsWith('.png')) return 'image/png';
+  if (file.endsWith('.gif')) return 'image/gif';
+  if (file.endsWith('.svg')) return 'image/svg+xml';
+  if (file.endsWith('.fbx')) return 'application/octet-stream';
+  if (file.endsWith('.glb')) return 'model/gltf-binary';
+  if (file.endsWith('.gltf')) return 'model/gltf+json';
+  return 'application/octet-stream';
+}
+
+function serveFile(res, filePath) {
+  fs.readFile(filePath, (err, buf) => {
+    if (err) return notFound(res);
+    send(res, 200, buf, { 'Content-Type': mimeType(filePath), 'Cache-Control': 'no-cache' });
+  });
+}
+
+function listCharacters() {
+  try {
+    const names = fs.readdirSync(DIST_DIR).filter(n => {
+      const p = path.join(DIST_DIR, n);
+      return fs.existsSync(p) && fs.statSync(p).isDirectory();
+    });
+    return names;
+  } catch { return []; }
+}
+
+function runSfCommand(args) {
+  return new Promise((resolve) => {
+    const sfPath = path.join(REPO_ROOT, 'packages', 'cli', 'bin', 'sf');
+    const child = spawn('node', [sfPath, ...args], { 
+      cwd: REPO_ROOT,
+      env: { ...process.env, BLENDER_BIN: 'blender' }
+    });
+    
+    let stdout = '';
+    let stderr = '';
+    
+    child.stdout?.on('data', (data) => stdout += data.toString());
+    child.stderr?.on('data', (data) => stderr += data.toString());
+    
+    child.on('close', (code) => {
+      resolve({
+        success: code === 0,
+        code,
+        stdout,
+        stderr,
+        output: stdout + (stderr ? '\n--- STDERR ---\n' + stderr : '')
+      });
+    });
+    
+    child.on('error', (error) => {
+      resolve({
+        success: false,
+        error: error.message,
+        output: error.message
+      });
+    });
+  });
+}
+
+async function handleBuildAPI(req, res, action) {
+  if (req.method !== 'POST') {
+    return send(res, 405, 'Method not allowed');
+  }
+  
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', async () => {
+    try {
+      const config = JSON.parse(body);
+      let result;
+      
+      switch (action) {
+        case 'plan':
+          result = await runSfCommand([
+            'plan', config.character,
+            '--res', config.resolution,
+            '--directions', config.directions,
+            '--emit-job'
+          ]);
+          result.title = 'Build Plan';
+          break;
+          
+        case 'build':
+          const buildArgs = [
+            'build', config.character,
+            '--res', config.resolution,
+            '--directions', config.directions
+          ];
+          if (!config.useBlender) buildArgs.push('--no-blender');
+          
+          result = await runSfCommand(buildArgs);
+          result.title = 'Build Output';
+          result.message = result.success ? 'Build completed successfully!' : 'Build failed';
+          break;
+          
+        case 'validate':
+          result = await runSfCommand(['validate', config.character]);
+          result.title = 'Validation Results';
+          break;
+          
+        case 'clean':
+          const characterName = config.character.split('/').pop().replace('.json', '');
+          const name = characterName.charAt(0).toUpperCase() + characterName.slice(1) + '_M01';
+          const distPath = path.join(DIST_DIR, name);
+          
+          try {
+            if (fs.existsSync(distPath)) {
+              fs.rmSync(distPath, { recursive: true, force: true });
+              result = { success: true, message: 'Output cleaned successfully', output: `Removed: ${distPath}` };
+            } else {
+              result = { success: true, message: 'Nothing to clean', output: 'No output directory found' };
+            }
+          } catch (error) {
+            result = { success: false, message: 'Failed to clean output', output: error.message };
+          }
+          break;
+          
+        default:
+          return sendJson(res, 400, { success: false, message: 'Unknown action' });
+      }
+      
+      sendJson(res, 200, result);
+      
+    } catch (error) {
+      sendJson(res, 400, { success: false, message: 'Invalid request', error: error.message });
+    }
+  });
+}
+
+async function handleContentInspection(req, res) {
+  if (req.method !== 'POST') {
+    return send(res, 405, 'Method not allowed');
+  }
+  
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', async () => {
+    try {
+      const { characterPath } = JSON.parse(body);
+      const fullPath = path.join(REPO_ROOT, characterPath);
+      
+      if (!fs.existsSync(fullPath)) {
+        return sendJson(res, 404, { success: false, message: 'Character file not found' });
+      }
+      
+      const characterData = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+      const result = {
+        success: true,
+        character: characterData,
+        assets: {
+          rig: null,
+          animations: [],
+          textures: [],
+          equipment: []
+        }
+      };
+      
+      // Check rig file
+      if (characterData.rig?.src) {
+        const rigPath = path.resolve(path.dirname(fullPath), characterData.rig.src);
+        if (fs.existsSync(rigPath)) {
+          const stats = fs.statSync(rigPath);
+          result.assets.rig = {
+            path: characterData.rig.src,
+            exists: true,
+            size: stats.size,
+            modified: stats.mtime.toISOString()
+          };
+        } else {
+          result.assets.rig = {
+            path: characterData.rig.src,
+            exists: false
+          };
+        }
+      }
+      
+      // Check animation set
+      if (characterData.animations?.set) {
+        const animSetPath = path.join(REPO_ROOT, 'samples', 'animationSets', `${characterData.animations.set}.json`);
+        if (fs.existsSync(animSetPath)) {
+          const animSet = JSON.parse(fs.readFileSync(animSetPath, 'utf8'));
+          result.animationSet = animSet;
+          
+          // Check individual animation files
+          if (animSet.clips) {
+            for (const [clipName, clipData] of Object.entries(animSet.clips)) {
+              const animPath = path.resolve(path.dirname(animSetPath), clipData.src);
+              const exists = fs.existsSync(animPath);
+              result.assets.animations.push({
+                name: clipName,
+                path: clipData.src,
+                exists,
+                frames: clipData.frames,
+                loop: clipData.loop,
+                fps: clipData.fps
+              });
+            }
+          }
+        }
+      }
+      
+      // Check textures
+      if (characterData.skin?.albedo) {
+        const texPath = path.resolve(path.dirname(fullPath), characterData.skin.albedo);
+        result.assets.textures.push({
+          type: 'albedo',
+          path: characterData.skin.albedo,
+          exists: fs.existsSync(texPath)
+        });
+      }
+      
+      if (characterData.skin?.normal) {
+        const texPath = path.resolve(path.dirname(fullPath), characterData.skin.normal);
+        result.assets.textures.push({
+          type: 'normal',
+          path: characterData.skin.normal,
+          exists: fs.existsSync(texPath)
+        });
+      }
+      
+      // Check equipment
+      if (characterData.equipment) {
+        for (const item of characterData.equipment) {
+          const equipPath = path.resolve(path.dirname(fullPath), item.item);
+          result.assets.equipment.push({
+            mount: item.mount,
+            path: item.item,
+            exists: fs.existsSync(equipPath),
+            layer: item.layer
+          });
+        }
+      }
+      
+      sendJson(res, 200, result);
+      
+    } catch (error) {
+      sendJson(res, 400, { success: false, message: 'Invalid request', error: error.message });
+    }
+  });
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const p = url.pathname;
+
+  // Build API endpoints
+  if (p === '/api/plan') return handleBuildAPI(req, res, 'plan');
+  if (p === '/api/build') return handleBuildAPI(req, res, 'build');
+  if (p === '/api/validate') return handleBuildAPI(req, res, 'validate');
+  if (p === '/api/clean') return handleBuildAPI(req, res, 'clean');
+  
+  // Content inspection endpoints
+  if (p === '/api/content/characters') {
+    const charactersDir = path.join(REPO_ROOT, 'samples', 'characters');
+    try {
+      const files = fs.readdirSync(charactersDir)
+        .filter(f => f.endsWith('.json'))
+        .map(f => ({
+          name: f,
+          path: path.join('samples/characters', f)
+        }));
+      return sendJson(res, 200, { characters: files });
+    } catch { return sendJson(res, 200, { characters: [] }); }
+  }
+  
+  if (p === '/api/content/inspect') {
+    return handleContentInspection(req, res);
+  }
+
+  // API endpoints
+  if (p === '/api/characters') {
+    return sendJson(res, 200, { characters: listCharacters() });
+  }
+  if (p.startsWith('/api/characters/')) {
+    const name = decodeURIComponent(p.split('/')[3] || '');
+    if (!name) return notFound(res);
+    const base = path.join(DIST_DIR, name);
+    const meta = path.join(base, 'character.meta.json');
+    const index = path.join(base, 'frames_index.json');
+    if (url.pathname.endsWith('/meta')) {
+      return serveFile(res, meta);
+    }
+    if (url.pathname.endsWith('/frames_index')) {
+      return serveFile(res, index);
+    }
+    return sendJson(res, 200, { name, exists: fs.existsSync(base) });
+  }
+
+  // Serve dist files under /dist/
+  if (p.startsWith('/dist/')) {
+    const file = path.join(REPO_ROOT, p);
+    return serveFile(res, file);
+  }
+  
+  // Serve content files under /content/
+  if (p.startsWith('/content/')) {
+    const decodedPath = decodeURIComponent(p);
+    const file = path.join(REPO_ROOT, decodedPath);
+    return serveFile(res, file);
+  }
+
+  // Default: serve QA viewer index
+  let filePath = path.join(QA_DIR, p === '/' ? 'index.html' : p);
+  if (!fs.existsSync(filePath)) filePath = path.join(QA_DIR, 'index.html');
+  serveFile(res, filePath);
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(`sf-web running at http://${HOST}:${PORT}`);
+  console.log(`- QA viewer: /`);
+  console.log(`- Dist: /dist/`);
+  console.log(`- API: /api/characters, /api/characters/:name/meta, /api/characters/:name/frames_index`);
+});
